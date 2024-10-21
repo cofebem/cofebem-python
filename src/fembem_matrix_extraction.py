@@ -1,40 +1,46 @@
+"""
+Code that constructs and saves a BEM matrix from 3D FEM simulations using FEniCSx.
+
+Author: Vladislav A. Yastrebov (CNRS, Mines Paris - PSL, Centre des Matériaux)
+Date: May 2024
+License: BSD 3-Clause
+"""
+
 from mpi4py import MPI
 from petsc4py import PETSc
 import numpy as np
-import matplotlib.pyplot as plt
 from numba import jit, prange
 
-
+# Fenicsx libraries
 import ufl
-from dolfinx import default_scalar_type, mesh, la
+from dolfinx import default_scalar_type, mesh
 from dolfinx.fem import (
     Constant,
     dirichletbc,
-    Function,
     functionspace,
     locate_dofs_topological,
     locate_dofs_geometrical,
-    Expression,
 )
-from dolfinx.fem.petsc import LinearProblem, create_vector
+from dolfinx.fem.petsc import LinearProblem
 from dolfinx.io import XDMFFile
 from dolfinx.mesh import CellType, GhostMode, create_box, locate_entities_boundary, locate_entities, meshtags
 from ufl import dx, ds, grad, inner, sym, Measure
 
 dtype = PETSc.ScalarType
 
+# Create a mesh of a cube with dimensions [0, 1] x [0, 1] x [0, 1] and 15 x 15 x 5 elements
 msh = create_box(
     MPI.COMM_WORLD,
     [np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0])],
-    [30, 30, 10],
+    [15, 15, 5],
     CellType.hexahedron,
     # CellType.tetrahedron,
     ghost_mode=GhostMode.shared_facet,
 )
 
-omega, rho = 300.0, 10.0
-x = ufl.SpatialCoordinate(msh)
-f = ufl.as_vector((rho * omega**2 * x[0], rho * omega**2 * x[1], 0.0))
+# omega, rho = 300.0, 10.0
+# x = ufl.SpatialCoordinate(msh)
+# f = ufl.as_vector((rho * omega**2 * x[0], rho * omega**2 * x[1], 0.0))
 
 # Define the elasticity parameters and create a function that computes
 # an expression for the stress given a displacement field.
@@ -102,8 +108,6 @@ a = inner(sigma(u), epsilon(v)) * dx
 
 # Solve the proble with Neumann localized BC
 problem = LinearProblem(a, L, bcs = [bc2], petsc_options={"ksp_type": "preonly", "pc_type": "lu"})
-# Solve the problem with Dirichlet localized BC
-# problem = LinearProblem(a, L, bcs = [bc1, bc2], petsc_options={"ksp_type": "preonly", "pc_type": "lu"})
 uh = problem.solve()
 
 # Actually we could do it differently
@@ -156,7 +160,7 @@ for i, u_idf in enumerate(boundary_dofs):
     update_and_solve(rhs_values, [u_idf])
     msg += "... solved."    
     
-    K[i, :] = get_deflection(uh.array, boundary_dofs, 1)
+    K[i, :] = get_deflection(uh.array, boundary_dofs, force) 
     if i % ten_percent == 0:
         print("Progress: {0:3.0f}%".format(i/len(boundary_dofs)*100))
 
