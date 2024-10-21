@@ -1,10 +1,14 @@
+"""
+Code that constructs and saves a BEM matrix from 3D FEM simulations using FEniCSx
+"""
+
 from mpi4py import MPI
 from petsc4py import PETSc
 import numpy as np
 import matplotlib.pyplot as plt
 from numba import jit, prange
 
-
+# Fenicsx libraries
 import ufl
 from dolfinx import default_scalar_type, mesh, la
 from dolfinx.fem import (
@@ -156,7 +160,7 @@ for i, u_idf in enumerate(boundary_dofs):
     update_and_solve(rhs_values, [u_idf])
     msg += "... solved."    
     
-    K[i, :] = get_deflection(uh.array, boundary_dofs, 1)
+    K[i, :] = get_deflection(uh.array, boundary_dofs, 1) # FIXME: probably should be force instead of 1
     if i % ten_percent == 0:
         print("Progress: {0:3.0f}%".format(i/len(boundary_dofs)*100))
 
