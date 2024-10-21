@@ -94,7 +94,7 @@ if Test == "Dragon":
     from mpl_toolkits.mplot3d import Axes3D
 
 
-    dae_name = "mesh/model.dae"
+    dae_name = "../mesh/model.dae"
 
     ## From Collada file to Trimesh object
     dae = collada.Collada(dae_name)
