@@ -65,9 +65,9 @@ class Cluster:
             self.children = clusters
         else:
             self.children.extend(clusters)
-    def size():
+    def size(self):
         return self.size
-    def center():
+    def center(self):
         return self.center
     
     def dist_to_cluster(self, cluster):

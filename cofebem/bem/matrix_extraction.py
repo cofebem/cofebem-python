@@ -28,6 +28,7 @@ from ufl import dx, ds, grad, inner, sym, Measure
 
 dtype = PETSc.ScalarType
 
+
 # Create a mesh of a cube with dimensions [0, 1] x [0, 1] x [0, 1] and 15 x 15 x 5 elements
 msh = create_box(
     MPI.COMM_WORLD,
