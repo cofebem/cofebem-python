@@ -27,7 +27,7 @@ This document provides a structured naming convention for the **COFEBEM** projec
   - Example: `contact`, `fem`, `utils`
 
 - **Branches**: Use kebab-case.
-  - Example: `contact`, `fem`, `utils`
+  - Example: `project-structuring`
 
 
 

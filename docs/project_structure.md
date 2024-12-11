@@ -9,7 +9,7 @@
 /cofebem-pythom
   /cofebem                
     /bem              
-      boundary_elements.py
+      construct_H.py
     /fem              
       fem.py
       form.py
@@ -28,8 +28,9 @@
     /contact          
       normal_contact_solver.py
       friction_contact_solver.py
+    /mesh
+      mesh.py
     /utils 
-      /meshes
       /linear_algebra
       /optimization
         ccg.py
@@ -43,6 +44,4 @@
     /integration_tests
   /examples           
     fem_bem_example.py
-  /build              
-    CMakeLists.txt
 
