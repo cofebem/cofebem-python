@@ -1,9 +1,11 @@
 import numpy as np
 from scipy.linalg import solve
 from numba import njit
-import cupy as cp
 
-def schur_complement(A, B, C, D, assume_a='gen', overwrite_b=False, check_finite=False):
+# import cupy as cp
+
+
+def schur_complement(A, B, C, D, assume_a="gen", overwrite_b=False, check_finite=False):
     """
     Compute the Schur complement of D in the block matrix M = [[A, B], [C, D]].
 
@@ -23,9 +25,12 @@ def schur_complement(A, B, C, D, assume_a='gen', overwrite_b=False, check_finite
 
     Returns:
     ndarray: The Schur complement matrix S = A - B D⁻¹ C.
+
     """
     # Solve D * X = C for X
-    X = solve(D, C, assume_a=assume_a, overwrite_b=overwrite_b, check_finite=check_finite)
+    X = solve(
+        D, C, assume_a=assume_a, overwrite_b=overwrite_b, check_finite=check_finite
+    )
 
     # Compute B * X
     BX = np.dot(B, X)
@@ -34,7 +39,6 @@ def schur_complement(A, B, C, D, assume_a='gen', overwrite_b=False, check_finite
     S = A - BX
 
     return S
-
 
 
 @njit(fastmath=True, parallel=True)
@@ -52,8 +56,7 @@ def schur_complement_numba(A, B, C, D):
     return S
 
 
-
-
+"""
 def schur_complement_cupy(A, B, C, D):
 
     # Transfer data to GPU if not already
@@ -75,3 +78,6 @@ def schur_complement_cupy(A, B, C, D):
     S = cp.asnumpy(S_gpu)
 
     return S
+
+
+"""

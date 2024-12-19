@@ -22,14 +22,18 @@ from dolfinx.fem.petsc import LinearProblem
 from ufl import (
     Measure,
     Identity,
+    Form,
     TrialFunction,
     TestFunction,
     sym,
     grad,
     inner,
     tr,
+    zero,
     dx,
+    ds,
 )
+from dolfinx.io import XDMFFile
 
 from mpi4py import MPI
 from petsc4py import PETSc
@@ -100,6 +104,10 @@ class FenicsLE:
 
         # Boundary conditions list
         self.dirichlet_bcs = []
+        self.fdim = self.mesh.topology.dim - 1
+        self.facets = []
+        self.facets_markers = []
+        self.meshtags = []
         self.neumann_bcs = []
 
         # Placeholder for problem and solution
@@ -173,7 +181,7 @@ class FenicsLE:
         else:
             raise TypeError("Invalid value type for value.")
 
-    def epsilon(self, v):
+    def epsilon(self, v) -> Form:
         """
         Compute the symmetric strain tensor.
 
@@ -189,7 +197,7 @@ class FenicsLE:
         """
         return sym(grad(v))
 
-    def sigma(self, u):
+    def sigma(self, u) -> Form:
         """
         Compute the stress tensor using Hooke's law.
 
@@ -207,7 +215,7 @@ class FenicsLE:
             self.epsilon(u)
         ) * Identity(len(u))
 
-    def a(self):
+    def a(self) -> Form:
         """
         Define the bilinear form for the elasticity problem.
 
@@ -218,7 +226,7 @@ class FenicsLE:
         """
         return inner(self.sigma(self.u), self.epsilon(self.v)) * dx
 
-    def L(self) -> None:
+    def L(self) -> Form:
         """
         Define the linear form for the elasticity problem.
 
@@ -227,9 +235,12 @@ class FenicsLE:
         ufl.form.Form
             The linear form.
         """
-        L_form = inner(self.Vforce, self.v) * dx if self.Vforce else 0
-        for value, measure in self.neumann_bcs:
-            L_form += inner(value, self.v) * measure
+        L_form = 0
+        if self.Vforce:
+            L_form += inner(self.Vforce, self.v) * dx
+
+        for value, marker_id in self.neumann_bcs:
+            L_form += inner(value, self.v) * self.ds(marker_id)
         return L_form
 
     def add_dirichlet_bc(self, value, locator: Callable) -> None:
@@ -265,9 +276,7 @@ class FenicsLE:
         # Add the boundary condition to the list
         self.dirichlet_bcs.append(bc)
 
-    def add_neumann_bc(
-        self, value: Constant, locator: Callable, marker_id: int
-    ) -> None:
+    def add_neumann_bc(self, value, locator: Callable, marker_id: int) -> None:
         """
         Add a Neumann boundary condition.
 
@@ -280,22 +289,24 @@ class FenicsLE:
         marker_id : int
             The marker ID for the boundary facets.
         """
-        fdim = self.mesh.topology.dim - 1
-        facets = locate_entities_boundary(self.mesh, fdim, locator)
+        facets = locate_entities_boundary(self.mesh, self.fdim, locator)
 
         # Ensure boundary facets are found
         if not facets.size:
             raise ValueError("No boundary facets found for the given locator.")
 
-        tags = meshtags(self.mesh, fdim, facets, np.full(len(facets), marker_id))
-        measure = Measure("ds", domain=self.mesh, subdomain_data=tags)(marker_id)
+        self.facets.append(facets)
+        self.facets_markers.append(np.full(facets.size, marker_id))
+
+        # tags = meshtags(self.mesh, fdim, facets, np.full(len(facets), marker_id))
+        # measure = Measure("ds", domain=self.mesh, subdomain_data=tags)(marker_id)
 
         # Handle the value parameter
         value = self.__check_value(value)
 
-        self.neumann_bcs.append((value, measure))
+        self.neumann_bcs.append((value, marker_id))
 
-    def setup_problem(self, petsc_options: Optional[dict] = None) -> None:
+    def setup(self, petsc_options: Optional[dict] = None) -> None:
         """
         Set up the linear problem.
 
@@ -306,6 +317,19 @@ class FenicsLE:
         """
         if petsc_options is None:
             petsc_options = {"ksp_type": "preonly", "pc_type": "lu"}
+
+        if self.neumann_bcs:
+            self.facets = np.hstack(self.facets).astype(np.int32)
+            self.facets_markers = np.hstack(self.facets_markers).astype(np.int32)
+            sorted_facets = np.argsort(self.facets)
+
+            self.meshtags = meshtags(
+                self.mesh,
+                self.fdim,
+                self.facets[sorted_facets],
+                self.facets_markers[sorted_facets],
+            )
+            self.ds = Measure("ds", domain=self.mesh, subdomain_data=self.meshtags)
 
         # Create the linear problem
         self.problem = LinearProblem(
@@ -350,13 +374,37 @@ class FenicsLE:
             )
         return self.uh
 
+    def visualize(self, filename: str = "deformed_solution.xdmf"):
+        """
+        Visualize the deformed solution by writing it to an XDMF file.
+
+        Parameters
+        ----------
+        filename : str, optional
+            The name of the XDMF file to save the results (default is 'deformed_solution.xdmf').
+        scale : float, optional
+            Scaling factor for the deformation (default is 1.0).
+        """
+        if self.uh is None:
+            raise RuntimeError(
+                "No solution found. Solve the problem before visualizing."
+            )
+
+        self.uh.name = "Displacement"
+        with XDMFFile(self.mesh.comm, f"{filename}", "w") as xdmf:
+            xdmf.write_mesh(self.mesh)
+            xdmf.write_function(
+                self.uh
+            )  # Use WarpByVector in Paraview to visualize the deformation
+        logging.info("Solution saved for visualization in Paraview.")
+
     def compute_H(
         self,
         selector: Callable,
         method: str = "bruteforce",
         force_direction: int = 2,
         force_magnitude: float = 1.0,
-        save: bool = True,
+        save: bool = False,
     ) -> np.ndarray:
         """
         Compute the BEM matrix (H) for the current mesh and problem setup using the specified method.
@@ -398,9 +446,9 @@ class FenicsLE:
         assert (
             0 <= force_direction <= 2
         ), "Force direction must be 0 (x), 1 (y), or 2 (z)."
-        assert (
-            isinstance(force_magnitude, (float, int)) and force_magnitude > 0
-        ), "Force magnitude must be a positive float or integer."
+        assert isinstance(
+            force_magnitude, (float, int)
+        ), "Force magnitude must be a float or integer."
 
         # Locate boundary facets using the locator
         fdim = self.mesh.topology.dim - 1  # Boundary facets are of dimension (dim - 1)
@@ -452,6 +500,8 @@ class FenicsLE:
                 for dof_idx in dofs
             ]
 
+        logging.info(f"H computed successfully by brut force")
+
         if save:
             # Extract boundary node coordinates
             boundary_coords = self.V.tabulate_dof_coordinates()[dofs]
@@ -499,7 +549,8 @@ class FenicsLE:
         Kcc = K[np.ix_(uc_dofs, uc_dofs)]
 
         # Compute the Schur complement using the static method
-        H = np.linalg.inv(schur_complement(Kcc, Kcv.T, Kvc, Kvv))
+        H = np.linalg.inv(schur_complement(Kcc, Kcv, Kvc, Kvv))
+        logging.info(f"H computed successfully by schur complement")
 
         if save:
             # Extract boundary node coordinates
@@ -524,13 +575,28 @@ if __name__ == "__main__":
     # Create mesh
     mesh = create_unit_cube(MPI.COMM_WORLD, 10, 10, 10)
 
+    # Volumic force
+    rho = 7850
+    g = 9.81
+    force = np.array([0, 0, -rho * g])
+
     # Define boundary condition selector
     def boundary_selector1(x):
-        return np.isclose(x[0], 0)
+        return np.isclose(x[2], 0, atol=1e-5)
 
     # Define boundary condition selector for H
     def boundary_selector2(x):
-        return np.isclose(x[2], 0)
+        return (
+            (0.33 <= x[0])
+            & (x[0] <= 0.66)
+            & (0.33 <= x[1])
+            & (x[1] <= 0.66)
+            & np.isclose(x[2], 1, atol=1e-5)
+        )
+
+    # Define boundary condition selector for H
+    def boundary_selector3(x):
+        return np.isclose(x[2], 0, atol=1e-5)
 
     # Initialize FenicsLE
     fenics_le = FenicsLE(mesh=mesh, E=1e9, nu=0.3)
@@ -540,9 +606,35 @@ if __name__ == "__main__":
         value=np.array([0.0, 0.0, 0.0]), locator=boundary_selector1
     )
 
-    # Set up the problem
-    fenics_le.setup_problem()
+    # fenics_le.add_neumann_bc(
+    #     value=np.array([0.0, 0.0, -4000000000.0]),
+    #     locator=boundary_selector2,
+    #     marker_id=1,
+    # )
+
+    # fenics_le.add_neumann_bc(
+    #     value=np.array([0.0, -3000000000.0, 0.0]),
+    #     locator=boundary_selector3,
+    #     marker_id=2,
+    # )
+
+    # Set up and solve the problem
+    fenics_le.setup()
+    fenics_le.solve()
+
+    # Solution
+    uh = fenics_le.get_solution()
+
+    # Visualize
+    # fenics_le.visualize()
 
     # Compute BEM matrix
-    H = fenics_le.compute_H(selector=boundary_selector2, method="bruteforce")
-    print("BEM matrix H:", H)
+    Hbrut = fenics_le.compute_H(
+        selector=boundary_selector3, force_magnitude=-1e8, method="bruteforce"
+    )
+
+    Hschur = fenics_le.compute_H(
+        selector=boundary_selector3, force_magnitude=-1e8, method="schur"
+    )
+
+    print(np.linalg.norm(Hbrut - Hschur))
