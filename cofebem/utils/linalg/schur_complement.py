@@ -5,40 +5,94 @@ from numba import njit
 # import cupy as cp
 
 
+import numpy as np
+from scipy.linalg import solve
+
+
 def schur_complement(A, B, C, D, assume_a="gen", overwrite_b=False, check_finite=False):
     """
-    Compute the Schur complement of D in the block matrix M = [[A, B], [C, D]].
+    Compute the Schur complement of A in the block matrix M = [[A, B], [C, D]],
+    assuming A is invertible.
 
-    Parameters:
-    A (ndarray): Square matrix A.
-    B (ndarray): Matrix B.
-    C (ndarray): Matrix C.
-    D (ndarray): Invertible square matrix D.
-    assume_a (str, optional): Assumed type of the matrix D.
-        Options are:
-        - 'gen' : generic matrix (default)
-        - 'sym' : symmetric matrix
-        - 'her' : Hermitian matrix
-        - 'pos' : symmetric positive definite
-    overwrite_b (bool, optional): Allow overwriting data in C (may enhance performance).
-    check_finite (bool, optional): Skip checking input matrices contain only finite numbers for performance.
+    Specifically, we calculate:
+        S = D - C * (A^-1 * B).
 
-    Returns:
-    ndarray: The Schur complement matrix S = A - B D⁻¹ C.
+    Parameters
+    ----------
+    A : ndarray
+        Invertible square matrix A.
+    B : ndarray
+        Matrix B.
+    C : ndarray
+        Matrix C.
+    D : ndarray
+        Square matrix D.
+    assume_a : {'gen', 'sym', 'her', 'pos'}, optional
+        Tells SciPy what type of matrix A is, to possibly optimize the solve step:
+          - 'gen' : generic (no special properties assumed) [default].
+          - 'sym' : symmetric.
+          - 'her' : Hermitian.
+          - 'pos' : positive definite (symmetric).
+    overwrite_b : bool, optional
+        If True, allow overwriting data in B during the solve step. This can reduce
+        memory usage but means you should not use the original B afterward.
+    check_finite : bool, optional
+        If False, do not check if the input matrices contain only finite numbers
+        (may give performance gains but use with caution).
 
+    Returns
+    -------
+    S : ndarray
+        The Schur complement of A, i.e. S = D - C * A^-1 * B.
     """
-    # Solve D * X = C for X
+    # 1) Solve A * X = B for X, i.e., X = A^-1 * B
     X = solve(
-        D, C, assume_a=assume_a, overwrite_b=overwrite_b, check_finite=check_finite
+        A, B, assume_a=assume_a, overwrite_b=overwrite_b, check_finite=check_finite
     )
 
-    # Compute B * X
-    BX = np.dot(B, X)
+    # 2) Compute C * X
+    CX = np.dot(C, X)
 
-    # Compute the Schur complement
-    S = A - BX
+    # 3) Compute S = D - CX
+    S = D - CX
 
     return S
+
+
+# def schur_complement(A, B, C, D, assume_a="gen", overwrite_b=False, check_finite=False):
+#     """
+#     Compute the Schur complement of D in the block matrix M = [[A, B], [C, D]].
+
+#     Parameters:
+#     A (ndarray): Square matrix A.
+#     B (ndarray): Matrix B.
+#     C (ndarray): Matrix C.
+#     D (ndarray): Invertible square matrix D.
+#     assume_a (str, optional): Assumed type of the matrix D.
+#         Options are:
+#         - 'gen' : generic matrix (default)
+#         - 'sym' : symmetric matrix
+#         - 'her' : Hermitian matrix
+#         - 'pos' : symmetric positive definite
+#     overwrite_b (bool, optional): Allow overwriting data in C (may enhance performance).
+#     check_finite (bool, optional): Skip checking input matrices contain only finite numbers for performance.
+
+#     Returns:
+#     ndarray: The Schur complement matrix S = A - B D⁻¹ C.
+
+#     """
+#     # Solve D * X = C for X
+#     X = solve(
+#         D, C, assume_a=assume_a, overwrite_b=overwrite_b, check_finite=check_finite
+#     )
+
+#     # Compute B * X
+#     BX = np.dot(B, X)
+
+#     # Compute the Schur complement
+#     S = A - BX
+
+#     return S
 
 
 @njit(fastmath=True, parallel=True)

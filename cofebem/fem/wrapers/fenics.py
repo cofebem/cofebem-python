@@ -6,6 +6,7 @@ import ufl
 from fem_wrapper import FEMWraper
 from cofebem.fem.fem import FEM
 
+
 class Fenics(FEMWraper):
     def __init__(self, fem: FEM):
         self.mesh = mesh
@@ -44,8 +45,8 @@ class Fenics(FEMWraper):
         # Create linear solver and solve
         solver = PETSc.KSP().create(self.comm)
         solver.setOperators(self.A)
-        solver.setType('preonly')
-        solver.getPC().setType('lu')
+        solver.setType("preonly")
+        solver.getPC().setType("lu")
         solver.solve(self.b, self.solution.vector)
 
     def get_solution(self):

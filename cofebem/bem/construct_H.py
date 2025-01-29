@@ -56,10 +56,10 @@ class FenicsLE:
     def __init__(
         self,
         mesh: Mesh,
-        element_type: str = "CG",
+        element_type: str = "Lagrange",
         element_degree: int = 1,
         Vforce: Optional[Union[Callable, np.ndarray, float]] = None,
-        E: float = 2.1e11,
+        E: float = 1e9,
         nu: float = 0.3,
     ):
         """
@@ -104,6 +104,7 @@ class FenicsLE:
 
         # Boundary conditions list
         self.dirichlet_bcs = []
+        self.dirichlet_dofs = []
         self.fdim = self.mesh.topology.dim - 1
         self.facets = []
         self.facets_markers = []
@@ -112,6 +113,7 @@ class FenicsLE:
 
         # Placeholder for problem and solution
         self.problem = None
+        # self.free_problem = None
         self.uh = None
 
     def __initialize_Vforce(
@@ -240,7 +242,7 @@ class FenicsLE:
             L_form += inner(self.Vforce, self.v) * dx
 
         for value, marker_id in self.neumann_bcs:
-            L_form += inner(value, self.v) * self.ds(marker_id)
+            L_form += 1e8 * inner(value, self.v) * self.ds(marker_id)
         return L_form
 
     def add_dirichlet_bc(self, value, locator: Callable) -> None:
@@ -275,6 +277,7 @@ class FenicsLE:
         bc = dirichletbc(value, dofs, self.V)
         # Add the boundary condition to the list
         self.dirichlet_bcs.append(bc)
+        self.dirichlet_dofs.append(dofs)
 
     def add_neumann_bc(self, value, locator: Callable, marker_id: int) -> None:
         """
@@ -335,6 +338,65 @@ class FenicsLE:
         self.problem = LinearProblem(
             a=self.a(), L=self.L(), bcs=self.dirichlet_bcs, petsc_options=petsc_options
         )
+
+        # # Now define a minimal BC for the free problem
+        # # e.g., pin one node at (0,0,0) so that it can't translate, etc.
+        # def locatorA(x):
+        #     return (
+        #         np.isclose(x[0], 0.0, atol=0.07)
+        #         & np.isclose(x[1], 0.0, atol=0.07)
+        #         & np.isclose(x[2], 0.0)
+        #     )
+
+        # def locatorB(x):
+        #     return (
+        #         np.isclose(x[0], 1.0, atol=0.07)
+        #         & np.isclose(x[1], 1.0, atol=0.07)
+        #         & np.isclose(x[2], 0.0)
+        #     )
+
+        # def locatorC(x):
+        #     return (
+        #         np.isclose(x[0], 0.0, atol=0.07)
+        #         & np.isclose(x[1], 1.0, atol=0.07)
+        #         & np.isclose(x[2], 0.0)
+        #     )
+
+        # def locatorD(x):
+        #     return (
+        #         np.isclose(x[0], 0.0, atol=0.07)
+        #         & np.isclose(x[1], 1.0, atol=0.07)
+        #         & np.isclose(x[2], 0.8, atol=0.2)
+        #     )
+
+        # fdim = self.mesh.topology.dim - 1
+        # val_pt = Constant(self.mesh, PETSc.ScalarType([0.0, 0.0, 0.0]))
+
+        # facetsA = locate_entities_boundary(self.mesh, fdim, locatorA)
+        # dofsA = locate_dofs_topological(self.V, fdim, facetsA)
+
+        # facetsB = locate_entities_boundary(self.mesh, fdim, locatorB)
+        # dofsB = locate_dofs_topological(self.V, fdim, facetsB)
+
+        # facetsC = locate_entities_boundary(self.mesh, fdim, locatorC)
+        # dofsC = locate_dofs_topological(self.V, fdim, facetsC)
+
+        # facetsD = locate_entities_boundary(self.mesh, fdim, locatorD)
+        # dofsD = locate_dofs_topological(self.V, fdim, facetsD)
+
+        # bcA = dirichletbc(val_pt, dofsA, self.V)
+        # bcB = dirichletbc(val_pt, dofsB, self.V)
+        # bcC = dirichletbc(val_pt, dofsC, self.V)
+        # bcD = dirichletbc(val_pt, dofsD, self.V)
+
+        # bc_minimal = [bcA, bcB, bcC, bcD]
+
+        # self.free_problem = LinearProblem(
+        #     a=self.a(),
+        #     L=self.L(),
+        #     bcs=bc_minimal,  # minimal BC
+        #     petsc_options=petsc_options,
+        # )
 
     def solve(self) -> None:
         """
@@ -432,7 +494,7 @@ class FenicsLE:
                 selector, force_direction, force_magnitude, save
             )
         elif method == "schur":
-            return self.__H_by_schur(selector, save)
+            return self.__H_by_schur(selector, force_direction, save)
         else:
             raise ValueError("Invalid method. Choose either 'bruteforce' or 'schur'.")
 
@@ -472,16 +534,18 @@ class FenicsLE:
         solver.setType("preonly")
         solver.getPC().setType("lu")
         solver.setFromOptions()
-        # solver.setUp()
+        solver.setUp()
 
         # Initialize right-hand side and solution vectors
         rhs = self.problem.b.copy()
         uh = PETSc.Vec().createMPI(rhs.getSize(), comm=self.mesh.comm)
 
         # Compute BEM matrix
-        H = np.zeros((dofs.size, dofs.size), dtype=np.float64)
+        H = np.zeros((dofs.size, dofs.size), dtype=PETSc.ScalarType)
 
-        for i, dof in enumerate(tqdm(dofs, desc="Computing BEM Matrix", unit="DOF")):
+        for i, dof in enumerate(
+            tqdm(dofs, desc="Computing Contact Compliance Matrix", unit="it")
+        ):
             # Reset the right-hand side
             rhs.set(0)
             rhs.setValue(
@@ -516,7 +580,9 @@ class FenicsLE:
 
         return H
 
-    def __H_by_schur(self, selector: Callable, save: bool) -> np.ndarray:
+    def __H_by_schur(
+        self, selector: Callable, force_direction: int, save: bool
+    ) -> np.ndarray:
         # Only the case with Vforce = f_v = 0 is  implemented
         # ToDO: Implement the general case
         # Locate boundary facets using the locator
@@ -529,7 +595,7 @@ class FenicsLE:
 
         # Locate DOFs on these boundary facets
         boundary_dofs = locate_dofs_topological(self.V, fdim, facets)
-
+        boundary_dofs = self.mesh.geometry.dim * boundary_dofs + force_direction
         # Ensure DOFs are extracted
         if not boundary_dofs.size:
             raise ValueError("No DOFs found on the boundary for the given locator.")
@@ -541,6 +607,7 @@ class FenicsLE:
         # Partition the global matrix into blocks
         all_dofs = np.arange(K.shape[0])
         uv_dofs = np.setdiff1d(all_dofs, boundary_dofs)
+        # uv_dofs = np.setdiff1d(uv_dofs, np.array(self.dirichlet_dofs))
         uc_dofs = boundary_dofs
 
         Kvv = K[np.ix_(uv_dofs, uv_dofs)]
@@ -549,7 +616,7 @@ class FenicsLE:
         Kcc = K[np.ix_(uc_dofs, uc_dofs)]
 
         # Compute the Schur complement using the static method
-        H = np.linalg.inv(schur_complement(Kcc, Kcv, Kvc, Kvv))
+        H = np.linalg.inv(schur_complement(Kvv, Kvc, Kcv, Kcc))
         logging.info(f"H computed successfully by schur complement")
 
         if save:
@@ -572,8 +639,17 @@ if __name__ == "__main__":
     from mpi4py import MPI
     import numpy as np
 
+    import time
+
     # Create mesh
-    mesh = create_unit_cube(MPI.COMM_WORLD, 10, 10, 10)
+    # mesh = create_unit_cube(MPI.COMM_WORLD, 15, 15, 5)
+    mesh = create_box(
+        MPI.COMM_WORLD,
+        [np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0])],
+        [40, 40, 5],
+        CellType.hexahedron,
+        ghost_mode=GhostMode.shared_facet,
+    )
 
     # Volumic force
     rho = 7850
@@ -585,21 +661,21 @@ if __name__ == "__main__":
         return np.isclose(x[2], 0, atol=1e-5)
 
     # Define boundary condition selector for H
+    selector_tol = 0.06
+
     def boundary_selector2(x):
         return (
-            (0.33 <= x[0])
-            & (x[0] <= 0.66)
-            & (0.33 <= x[1])
-            & (x[1] <= 0.66)
-            & np.isclose(x[2], 1, atol=1e-5)
+            np.isclose(x[0], 0.75, atol=selector_tol)
+            & np.isclose(x[1], 0.75, atol=selector_tol)
+            & np.isclose(x[2], 1.0, atol=selector_tol)
         )
 
     # Define boundary condition selector for H
     def boundary_selector3(x):
-        return np.isclose(x[2], 0, atol=1e-5)
+        return np.isclose(x[2], 1, atol=1e-5)
 
     # Initialize FenicsLE
-    fenics_le = FenicsLE(mesh=mesh, E=1e9, nu=0.3)
+    fenics_le = FenicsLE(mesh=mesh, E=1.0e9, nu=0.3)
 
     # Add Dirichlet boundary condition
     fenics_le.add_dirichlet_bc(
@@ -607,15 +683,9 @@ if __name__ == "__main__":
     )
 
     # fenics_le.add_neumann_bc(
-    #     value=np.array([0.0, 0.0, -4000000000.0]),
+    #     value=np.array([0.0, 0.0, -1e2]),
     #     locator=boundary_selector2,
     #     marker_id=1,
-    # )
-
-    # fenics_le.add_neumann_bc(
-    #     value=np.array([0.0, -3000000000.0, 0.0]),
-    #     locator=boundary_selector3,
-    #     marker_id=2,
     # )
 
     # Set up and solve the problem
@@ -628,13 +698,40 @@ if __name__ == "__main__":
     # Visualize
     # fenics_le.visualize()
 
-    # Compute BEM matrix
+    start_brut = time.perf_counter()
+
     Hbrut = fenics_le.compute_H(
         selector=boundary_selector3, force_magnitude=-1e8, method="bruteforce"
     )
+    end_brut = time.perf_counter()
+    elapsed_time_brut = end_brut - start_brut
 
+    print(f"Brut time = {elapsed_time_brut:.6f} seconds")
+
+    start_schur = time.perf_counter()
     Hschur = fenics_le.compute_H(
         selector=boundary_selector3, force_magnitude=-1e8, method="schur"
     )
+    end_schur = time.perf_counter()
+    elapsed_time_schur = end_schur - start_schur
+    print(f"Schur time = {elapsed_time_schur:.6f} seconds")
 
-    print(np.linalg.norm(Hbrut - Hschur))
+    # fname = "out_elasticity/FlexData.npz"
+    # data = np.load(fname)
+    # # H_Vlad = data["K"]
+    # import matplotlib.pyplot as plt
+    # import matplotlib.cm as cm
+
+    # fig = plt.figure()
+    # ax1 = fig.add_subplot(121)
+
+    # bar1 = ax1.imshow(Hbrut, cmap="viridis")
+    # ax1.set
+    # ax1.set_xlabel("Hbrut")
+
+    # ax2 = fig.add_subplot(122)
+    # ax2.imshow(Hschur, cmap="viridis")
+    # ax2.set_xlabel("Hschur")
+    # plt.show()
+
+    # print(np.linalg.norm(Hschur - Hbrut) / np.linalg.norm(Hbrut))

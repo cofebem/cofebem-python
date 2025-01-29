@@ -154,7 +154,6 @@ solver.setFromOptions()
 solver.setUp()  # Do we really need it?
 
 # Initialize solution vector
-
 # Preallocate and set up the right-hand side once
 rhs = problem.b.copy()
 
@@ -170,11 +169,20 @@ def update_and_solve(rhs_values, dof_indices):
     solver.solve(rhs, uh)
 
 
-@jit(nopython=True, parallel=True)
+# @jit(nopython=True, parallel=True)
+# def get_deflection(uh, boundary_dofs, force):
+#     n = len(boundary_dofs)
+#     result = np.zeros(n)
+#     for i in prange(n):
+#         #   result[i] = 1.
+#         result[i] = uh[boundary_dofs[i] * 3 + 2]
+#     return result / force
+
+
 def get_deflection(uh, boundary_dofs, force):
     n = len(boundary_dofs)
     result = np.zeros(n)
-    for i in prange(n):
+    for i in range(n):
         #   result[i] = 1.
         result[i] = uh[boundary_dofs[i] * 3 + 2]
     return result / force
