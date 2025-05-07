@@ -8,6 +8,8 @@ cofebem.egg-info/dependency_links.txt
 cofebem.egg-info/requires.txt
 cofebem.egg-info/top_level.txt
 cofebem/bem/__init__.py
+cofebem/bem/construct_S.py
+cofebem/bem/contact_gmsh.py
 cofebem/bem/matrix_extraction.py
 cofebem/bem/most_matrix_extraction.py
 cofebem/contact/__init__.py
@@ -22,11 +24,11 @@ cofebem/fem/function_space.py
 cofebem/fem/linear_form.py
 cofebem/fem/test.py
 cofebem/fem/trial.py
-cofebem/fem/wrapers/__init__.py
-cofebem/fem/wrapers/fem_wrapper.py
-cofebem/fem/wrapers/fenics.py
-cofebem/fem/wrapers/mfem.py
-cofebem/fem/wrapers/zset.py
+cofebem/fem/backends/__init__.py
+cofebem/fem/backends/fem_solver.py
+cofebem/fem/backends/fenics.py
+cofebem/fem/backends/mfem.py
+cofebem/fem/backends/zset.py
 cofebem/mesh/__init__.py
 cofebem/mesh/mesh.py
 cofebem/utils/__init__.py

@@ -223,8 +223,6 @@ class FunctionSpace:
 
         return values
 
-    # Additional methods as needed...
-
 
 class QuadratureRule:
     """

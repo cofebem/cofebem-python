@@ -5,10 +5,8 @@ from scipy.sparse import lil_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve, cg, bicgstab, gmres
 from ..mesh import Mesh
 from .function_space import FunctionSpace
-from .trial import TrialFunction
-from .test import TestFunction
-from .bilinear_form import BilinearForm
-from .linear_form import LinearForm
+from .function import TestFunction, TrialFunction
+from .forms import LinearForm, BilinearForm
 from .function import Function
 
 
