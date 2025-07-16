@@ -865,7 +865,7 @@ if __name__ == "__main__":
     mesh = create_box(
         MPI.COMM_WORLD,
         [np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0])],
-        [100, 50, 5],
+        [100, 50, 10],
         CellType.hexahedron,
         ghost_mode=GhostMode.shared_facet,
     )
@@ -921,36 +921,36 @@ if __name__ == "__main__":
     # )
 
     # Set up and solve the problem
-    fenics_le.setup()
-    fenics_le.solve()
+    # fenics_le.setup()
+    # fenics_le.solve()
 
-    # Solution
-    uh = fenics_le.get_solution()
+    # # Solution
+    # uh = fenics_le.get_solution()
 
-    # Visualize
-    fenics_le.visualize()
+    # # Visualize
+    # fenics_le.visualize()
 
-    tol = 1e-01
-    tdim = mesh.topology.dim
-    fdim = tdim - 1
+    # tol = 1e-01
+    # tdim = mesh.topology.dim
+    # fdim = tdim - 1
 
-    def Gamma_c_selector(x):
-        return (
-            np.isclose(x[2], 1, atol=tol)
-            & (x[1] >= 0.5 - tol)
-            & (x[1] <= 0.5 + tol)
-            & (x[0] >= 0.5)
-        )
+    # def Gamma_c_selector(x):
+    #     return (
+    #         np.isclose(x[2], 1, atol=tol)
+    #         & (x[1] >= 0.5 - tol)
+    #         & (x[1] <= 0.5 + tol)
+    #         & (x[0] >= 0.5)
+    #     )
 
-    Gamma_c = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_c_selector)
-    Ic = locate_dofs_topological(fenics_le.V, fdim, Gamma_c)
-    Gamma_c_x = mesh.geometry.x[Ic].reshape(-1, tdim)
+    # Gamma_c = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_c_selector)
+    # Ic = locate_dofs_topological(fenics_le.V, fdim, Gamma_c)
+    # Gamma_c_x = mesh.geometry.x[Ic].reshape(-1, tdim)
 
-    radii = np.sqrt((Gamma_c_x[:, 0] - 0.5) ** 2 + (Gamma_c_x[:, 1] - 0.5) ** 2)
-    order_radii = np.argsort(radii)
-    Ic_sorted = Ic[order_radii]
+    # radii = np.sqrt((Gamma_c_x[:, 0] - 0.5) ** 2 + (Gamma_c_x[:, 1] - 0.5) ** 2)
+    # order_radii = np.argsort(radii)
+    # Ic_sorted = Ic[order_radii]
 
-    u2plot = uh.x.array[Ic_sorted * tdim + 2]
+    # u2plot = uh.x.array[Ic_sorted * tdim + 2]
     # mapping = {dof: i for i, dof in enumerate(Ic_sorted)}
 
     # perm = np.array([mapping[dof] for dof in Ic])
@@ -958,35 +958,35 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     # Create the figure and axis
-    fig, ax = plt.subplots(figsize=(4, 3))
+    # fig, ax = plt.subplots(figsize=(4, 3))
 
-    x = np.linspace(0.1, 0.5, len(radii))
-    # Plot the data
-    ax.plot(
-        radii, np.abs(u2plot), "o-", label="displacement", markersize=6, linewidth=2
-    )
-    # ax.plot(x, 1 / x, "--", color="black", label="1/r")
-    # Logarithmic scale for better readability
-    # ax.set_xscale("log")
-    # ax.set_yscale("log")
+    # x = np.linspace(0.1, 0.5, len(radii))
+    # # Plot the data
+    # ax.plot(
+    #     radii, np.abs(u2plot), "o-", label="displacement", markersize=6, linewidth=2
+    # )
+    # # ax.plot(x, 1 / x, "--", color="black", label="1/r")
+    # # Logarithmic scale for better readability
+    # # ax.set_xscale("log")
+    # # ax.set_yscale("log")
 
-    # Labels and title
-    ax.set_xlabel("r distance to source point", fontsize=8)
-    ax.set_ylabel("u displacement", fontsize=8)
+    # # Labels and title
+    # ax.set_xlabel("r distance to source point", fontsize=8)
+    # ax.set_ylabel("u displacement", fontsize=8)
 
-    ax.set_title("u(r)", fontsize=16)
+    # ax.set_title("u(r)", fontsize=16)
 
-    # Grid and legend
-    ax.grid(True, which="both", linestyle="--", linewidth=0.5)
-    ax.legend(fontsize=8, loc="upper left")
+    # # Grid and legend
+    # ax.grid(True, which="both", linestyle="--", linewidth=0.5)
+    # ax.legend(fontsize=8, loc="upper left")
 
-    # Improve layout
-    plt.tight_layout()
+    # # Improve layout
+    # plt.tight_layout()
 
-    fig.savefig("u(r).png", format="png")
+    # fig.savefig("u(r).png", format="png")
 
-    # Show the plot
-    plt.show()
+    # # Show the plot
+    # plt.show()
 
     # start_brut = time.perf_counter()
 
@@ -1044,213 +1044,211 @@ if __name__ == "__main__":
 
     # print(np.linalg.norm(Hschur - Hbrut) / np.linalg.norm(Hbrut))
 
-    # import matplotlib.pyplot as plt
-    # from matplotlib.tri import Triangulation
+    import matplotlib.pyplot as plt
+    from matplotlib.tri import Triangulation
 
-    # # # Data extracted from the image
-    # dofs = np.array(
-    #     [25, 100, 324, 400, 676, 961, 1296, 1521, 1681, 10000, 10000, 10000]
-    # )
-    # x_lin = np.linspace(100, 1681, 10)
-    # brut_times = np.array(
-    #     [
-    #         0.013589,
-    #         0.121507,
-    #         1.809009,
-    #         3.103817,
-    #         9.302821,
-    #         20.086458,
-    #         38.231056,
-    #         52.474020,
-    #         65.840583,
-    #         1200,
-    #         1800,
-    #         2400,
-    #     ]
-    # )
-    # schur_times_lu = np.array(
-    #     [
-    #         0.014657,
-    #         0.137595,
-    #         1.738470,
-    #         3.097349,
-    #         10.606437,
-    #         25.781998,
-    #         60.205876,
-    #         91.310023,
-    #         138.289542,
-    #     ]
-    # )
+    # # Data extracted from the image
+    dofs = np.array([25, 100, 324, 400, 676, 961, 1296, 1521, 1681])
+    x_lin = np.linspace(100, 1681, 10)
+    brut_times = np.array(
+        [
+            0.013589,
+            0.121507,
+            1.809009,
+            3.103817,
+            9.302821,
+            20.086458,
+            38.231056,
+            52.474020,
+            65.840583,
+            # 1200,
+            # 1800,
+            # 2400,
+        ]
+    )
+    schur_times_lu = np.array(
+        [
+            0.014657,
+            0.137595,
+            1.738470,
+            3.097349,
+            10.606437,
+            25.781998,
+            60.205876,
+            91.310023,
+            138.289542,
+        ]
+    )
 
-    # schur_times_gmres = np.array(
-    #     [
-    #         0.054452,
-    #         0.732104,
-    #         7.769769,
-    #         12.125511,
-    #         30.394951,
-    #         69.287577,
-    #         148.345563,
-    #         230.163766,
-    #         317.156277,
-    #     ]
-    # )
+    schur_times_gmres = np.array(
+        [
+            0.054452,
+            0.732104,
+            7.769769,
+            12.125511,
+            30.394951,
+            69.287577,
+            148.345563,
+            230.163766,
+            317.156277,
+        ]
+    )
 
-    # # Shifted reference power curves to start at the same point as the first data point
-    # shift_value = schur_times_gmres[0]
-    # # power_1 = dofs / dofs[0] * shift_value
-    # # power_2 = (dofs / dofs[0]) ** 2 * shift_value
-    # power_1 = x_lin / x_lin[0] * shift_value
-    # power_2 = (x_lin / x_lin[0]) ** 2 * shift_value
+    # Shifted reference power curves to start at the same point as the first data point
+    shift_value = schur_times_gmres[0]
+    # power_1 = dofs / dofs[0] * shift_value
+    # power_2 = (dofs / dofs[0]) ** 2 * shift_value
+    power_1 = x_lin / x_lin[0] * shift_value
+    power_2 = (x_lin / x_lin[0]) ** 2 * shift_value
 
-    # # Create the figure and axis
-    # fig, ax = plt.subplots(figsize=(4, 3))
+    # Create the figure and axis
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    ax.plot(dofs, brut_times, "o-", label="Direct Sampling", markersize=6, linewidth=2)
+    ax.plot(
+        dofs,
+        schur_times_lu,
+        "s-",
+        label="Schur Compl. Direct (LU)",
+        markersize=6,
+        linewidth=2,
+    )
+    ax.plot(
+        dofs,
+        schur_times_gmres,
+        "v-",
+        label="Schur Compl. Iterative (GMRES)",
+        markersize=6,
+        linewidth=2,
+    )
+
+    ax.plot(x_lin, power_1, "--", color="black")  # label="O(N)")
+    ax.plot(
+        x_lin, power_2, "-.", color="black"
+    )  # label="O(N²)")  # Annotate power curves
+
+    ax.text(
+        dofs[-1],
+        power_1[-1],
+        "O(N)",
+        fontsize=8,
+        color="black",
+        verticalalignment="bottom",
+        horizontalalignment="right",
+    )
+    ax.text(
+        dofs[-1],
+        power_2[-1] - 10,
+        "O(N²)",
+        fontsize=8,
+        color="black",
+        verticalalignment="bottom",
+        horizontalalignment="right",
+    )
+
+    # Logarithmic scale for better readability
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    # Labels and title
+    ax.set_xlabel("Degrees of Freedom (DoFs)", fontsize=10)
+    ax.set_ylabel("CPU Time (s)", fontsize=10)
+
+    # ax.set_title("Comparison of Brute Force and Schur Complement Methods", fontsize=16)
+
+    # Grid and legend
+    ax.grid(True, which="both", linestyle="--", linewidth=0.5)
+    ax.legend(fontsize=8, loc="upper left")
+
+    # Improve layout
+    plt.tight_layout()
+
+    fig.savefig("schur_vs_sampling.pdf", format="pdf")
+
+    # Show the plot
+    plt.show()
+
+    duration_1step = np.array(
+        [
+            0.00526,
+            0.00760,
+            0.00955,
+            0.01083,
+            0.01864,
+            0.02415,
+            0.03442,
+            0.04143,
+            0.04586,
+        ]
+    )
+
+    duration_iteration = np.array(
+        [
+            0.00013,
+            0.00076,
+            0.00512,
+            0.00626,
+            0.01164,
+            0.01841,
+            0.02609,
+            0.03157,
+            0.03476,
+        ]
+    )
+
+    relative_difference = np.divide(
+        100 * (duration_1step - duration_iteration), duration_iteration
+    )
+
+    fig1, ax1 = plt.subplots()
+    fig2, ax2 = plt.subplots()
 
     # Plot the data
-    # ax.plot(dofs, brut_times, "o-", label="Direct Sampling", markersize=6, linewidth=2)
-    # ax.plot(
-    #     dofs,
-    #     schur_times_lu,
-    #     "s-",
-    #     label="Schur Compl. Direct (LU)",
-    #     markersize=6,
-    #     linewidth=2,
-    # )
-    # ax.plot(
-    #     dofs,
-    #     schur_times_gmres,
-    #     "v-",
-    #     label="Schur Compl. Iterative (GMRES)",
-    #     markersize=6,
-    #     linewidth=2,
-    # )
+    ax1.plot(
+        dofs, duration_1step, "o-", label="Duration 1st it", markersize=6, linewidth=2
+    )
+    ax1.plot(
+        dofs,
+        duration_iteration,
+        "s-",
+        label="Duration of any other it",
+        markersize=6,
+        linewidth=2,
+    )
+    ax2.plot(
+        dofs,
+        relative_difference,
+        "v-",
+        label="Relative difference",
+        markersize=6,
+        linewidth=2,
+    )
 
-    # ax.plot(x_lin, power_1, "--", color="black")  # label="O(N)")
-    # ax.plot(
-    #     x_lin, power_2, "-.", color="black"
-    # )  # label="O(N²)")  # Annotate power curves
+    # Labels and title
+    ax1.set_xlabel("Degrees of Freedom (DoFs)", fontsize=12)
+    ax1.set_ylabel("CPU Time (s)", fontsize=12)
 
-    # ax.text(
-    #     dofs[-1],
-    #     power_1[-1],
-    #     "O(N)",
-    #     fontsize=8,
-    #     color="black",
-    #     verticalalignment="bottom",
-    #     horizontalalignment="right",
-    # )
-    # ax.text(
-    #     dofs[-1],
-    #     power_2[-1],
-    #     "O(N²)",
-    #     fontsize=8,
-    #     color="black",
-    #     verticalalignment="bottom",
-    #     horizontalalignment="right",
-    # )
+    ax1.set_title("1st iteration vs following iterations", fontsize=16)
 
-    # # Logarithmic scale for better readability
-    # ax.set_xscale("log")
-    # ax.set_yscale("log")
+    # Grid and legend
+    ax1.grid(True, which="both", linestyle="--", linewidth=0.5)
+    ax1.legend(fontsize=12, loc="upper left")
 
-    # # Labels and title
-    # ax.set_xlabel("Degrees of Freedom (DoFs)", fontsize=8)
-    # ax.set_ylabel("CPU Time (s)", fontsize=8)
+    # Labels and title
+    ax2.set_xlabel("Degrees of Freedom (DoFs)", fontsize=12)
+    ax2.set_ylabel("CPU Time (s)", fontsize=12)
 
-    # # ax.set_title("Comparison of Brute Force and Schur Complement Methods", fontsize=16)
+    ax2.set_title("1st iteration vs following iterations", fontsize=16)
 
-    # # Grid and legend
-    # ax.grid(True, which="both", linestyle="--", linewidth=0.5)
-    # ax.legend(fontsize=8, loc="upper left")
+    # Grid and legend
+    ax2.grid(True, which="both", linestyle="--", linewidth=0.5)
+    ax2.legend(fontsize=12, loc="upper left")
 
-    # # Improve layout
-    # plt.tight_layout()
+    fig
+    plt.tight_layout()
 
-    # # fig.savefig("Figure_1.pdf", format="pdf")
-
-    # # Show the plot
-    # plt.show()
-
-    # duration_1step = np.array(
-    #     [
-    #         0.00526,
-    #         0.00760,
-    #         0.00955,
-    #         0.01083,
-    #         0.01864,
-    #         0.02415,
-    #         0.03442,
-    #         0.04143,
-    #         0.04586,
-    #     ]
-    # )
-
-    # duration_iteration = np.array(
-    #     [
-    #         0.00013,
-    #         0.00076,
-    #         0.00512,
-    #         0.00626,
-    #         0.01164,
-    #         0.01841,
-    #         0.02609,
-    #         0.03157,
-    #         0.03476,
-    #     ]
-    # )
-
-    # relative_difference = np.divide(
-    #     100 * (duration_1step - duration_iteration), duration_iteration
-    # )
-
-    # fig1, ax1 = plt.subplots()
-    # fig2, ax2 = plt.subplots()
-
-    # # Plot the data
-    # ax1.plot(
-    #     dofs, duration_1step, "o-", label="Duration 1st it", markersize=6, linewidth=2
-    # )
-    # ax1.plot(
-    #     dofs,
-    #     duration_iteration,
-    #     "s-",
-    #     label="Duration of any other it",
-    #     markersize=6,
-    #     linewidth=2,
-    # )
-    # ax2.plot(
-    #     dofs,
-    #     relative_difference,
-    #     "v-",
-    #     label="Relative difference",
-    #     markersize=6,
-    #     linewidth=2,
-    # )
-
-    # # Labels and title
-    # ax1.set_xlabel("Degrees of Freedom (DoFs)", fontsize=12)
-    # ax1.set_ylabel("CPU Time (s)", fontsize=12)
-
-    # ax1.set_title("1st iteration vs following iterations", fontsize=16)
-
-    # # Grid and legend
-    # ax1.grid(True, which="both", linestyle="--", linewidth=0.5)
-    # ax1.legend(fontsize=12, loc="upper left")
-
-    # # Labels and title
-    # ax2.set_xlabel("Degrees of Freedom (DoFs)", fontsize=12)
-    # ax2.set_ylabel("CPU Time (s)", fontsize=12)
-
-    # ax2.set_title("1st iteration vs following iterations", fontsize=16)
-
-    # # Grid and legend
-    # ax2.grid(True, which="both", linestyle="--", linewidth=0.5)
-    # ax2.legend(fontsize=12, loc="upper left")
-
-    # plt.tight_layout()
-
-    # # Show the plot
-    # plt.show()
+    # Show the plot
+    plt.show()
 
     ######################### Solve contact problem ####################
 

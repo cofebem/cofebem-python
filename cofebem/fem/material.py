@@ -1,6 +1,3 @@
-import numpy as np
-
-
 class Material:
     def __init__(self, E, nu, rho=None, sigma_y=None, name="Material"):
         assert rho > 0, "The density of the material must be positive."

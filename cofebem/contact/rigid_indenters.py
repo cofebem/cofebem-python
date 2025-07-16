@@ -4,6 +4,26 @@ from abc import ABC, abstractmethod
 import math
 
 
+def _parabolic(x, y, x0, y0, R, z0):
+    if np.sqrt((x - x0) ** 2 + (y - y0) ** 2) > R:
+        return z0 + R
+    else:
+        return z0 + R - np.sqrt(R**2 - (x - x0) ** 2 - (y - y0) ** 2)
+
+
+parabolic = np.vectorize(_parabolic)
+
+
+def _flat(x, y, x0, y0, R, z0):
+    if np.sqrt((x - x0) ** 2 + (y - y0) ** 2) < R:
+        return z0
+    else:
+        return z0 + 10.0
+
+
+flat = np.vectorize(_flat)
+
+
 def quat_2_mat(q):
     qw, qx, qy, qz = q
     qw2 = qw * qw
@@ -298,7 +318,7 @@ class Cylinder(RigidBodyBase):
         return meshio.Mesh(points=vertices, cells=[("triangle", all_faces)])
 
 
-class Parallelepiped(RigidBody):
+class Parallelepiped(RigidBodyBase):
     """
     A parallelepiped defined by three edge vectors v1, v2, v3.
     If v1, v2, v3 are linearly independent, this forms a "skewed box".

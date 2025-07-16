@@ -75,7 +75,7 @@ class RigidBodyBase(ABC):
         )
 
 
-class Sphere(RigidBody):
+class Sphere(RigidBodyBase):
     """
     Sphere shape, defined by radius and mesh resolution.
     """
@@ -118,7 +118,7 @@ class Sphere(RigidBody):
         return meshio.Mesh(points=vertices, cells=[("triangle", faces)])
 
 
-class Cube(RigidBody):
+class Cube(RigidBodyBase):
     """
     Cube shape, defined by side length.
     """
@@ -216,7 +216,7 @@ class SemiSphere(RigidBody):
         return meshio.Mesh(points=vertices, cells=[("triangle", faces)])
 
 
-class Cylinder(RigidBody):
+class Cylinder(RigidBodyBase):
     """
     Cylinder shape, defined by radius, height, and resolution.
     """
@@ -301,7 +301,7 @@ class Cylinder(RigidBody):
         return meshio.Mesh(points=vertices, cells=[("triangle", all_faces)])
 
 
-class Parallelepiped(RigidBody):
+class Parallelepiped(RigidBodyBase):
     """
     A parallelepiped defined by three edge vectors v1, v2, v3.
     If v1, v2, v3 are linearly independent, this forms a "skewed box".
@@ -378,7 +378,7 @@ class Parallelepiped(RigidBody):
         return meshio.Mesh(points=vertices, cells=[("triangle", faces)])
 
 
-class GeneralRigidBody(RigidBody):
+class GeneralRigidBody(RigidBodyBase):
     """
     A general rigid body that loads its geometry from a given mesh file,
     then applies the transform from q0 (position+orientation).

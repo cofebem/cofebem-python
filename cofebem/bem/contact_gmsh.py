@@ -10,11 +10,13 @@ import time
 
 import sys
 
-mesh, cell_tags, facet_tags = gmshio.read_from_msh(
-    "semisphere.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+# mesh, cell_tags, facet_tags = gmshio.read_from_msh(
+#     "semisphere.msh", MPI.COMM_WORLD, 0, gdim=3
+# )
 
 
+with XDMFFile(MPI.COMM_WORLD, "hex_hollow_cylinder.xdmf", "r") as xdmf:
+    mesh = xdmf.read_mesh(name="Grid")
 # Initialize FenicsLE
 fenics_le = FenicsLE(mesh=mesh, E=1.0e9, nu=0.3)
 
@@ -33,7 +35,7 @@ fenics_le.add_dirichlet_bc(value=np.array([0.0, 0.0, 0.0]), locator=boundary_sel
 
 # Define boundary condition selector
 def boundary_selector2(x):
-    return (0.9 <= x[2]) & (x[2] <= 1)
+    return (0.4 <= x[2]) & (x[2] <= 1.2)
 
 
 # # Define boundary condition selector

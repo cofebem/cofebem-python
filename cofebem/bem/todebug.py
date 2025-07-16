@@ -192,3 +192,36 @@ if __name__ == "__main__":
     integral = np.trapz(integrand, ts)
 
     print("Numerical contour integral:", np.real(integral))
+
+    from mpi4py import MPI
+    import dolfinx
+
+    mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 10, 10)
+    mesh.name = "InitialMesh"
+    element_type = "Lagrange"
+    element_degree = 1
+
+    V = dolfinx.fem.functionspace(
+        mesh, (element_type, element_degree, (mesh.geometry.dim,))
+    )
+    u = dolfinx.fem.Function(V)
+    # u.interpolate(lambda x: x[0] * x[1])
+    u.name = "f"
+
+    xdmf = dolfinx.io.XDMFFile(MPI.COMM_WORLD, "functions.xdmf", "w")
+    xdmf.write_mesh(mesh)
+    xdmf.write_function(u, mesh_xpath=f"/Xdmf/Domain/Grid[@Name='{mesh.name}']")
+
+    mesh.topology.create_connectivity(1, 2)
+    r_mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 15, 15)
+    r_mesh.name = "Refined"
+    Vr = dolfinx.fem.functionspace(
+        r_mesh, (element_type, element_degree, (mesh.geometry.dim,))
+    )
+    ur = dolfinx.fem.Function(Vr)
+    # ur.interpolate(lambda x: x[0] * x[1])
+    ur.name = "f"
+
+    xdmf.write_mesh(r_mesh)
+    xdmf.write_function(ur, t=1, mesh_xpath=f"/Xdmf/Domain/Grid[@Name='{r_mesh.name}']")
+    xdmf.close()

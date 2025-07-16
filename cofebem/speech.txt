@@ -1,0 +1,138 @@
+Slide 1 – Title
+
+    Hello everyone. I am Yahya Boye.
+    I work under the supervision of Stéphanie Chaillat (ENSTA Paris), Jérémy Bleyer (École des Ponts ParisTech), and Vladislav Yastrebov (Mines Paris – PSL).
+    I am happy to present our recent work on accelerating contact simulations in FEM with hierarchical matrices.
+
+Slide 2 – Outline
+
+    Here is a quick overview of today’s talk:
+
+        A short introduction and the motivation for contact modelling.
+
+        An overview of the classical numerical contact methods.
+
+        Our approach and the associated solver.
+
+        Selected numerical results.
+
+        Conclusions and outlook.
+
+Slide 3 – Why Contact Is Complicated
+
+    Contact is not simply two solid bodies touching; it is a tightly coupled problem with several layers of difficulty.
+
+    • Multi-physics. Thermal, electrical, and mechanical fields interact at the interface and must be solved simultaneously.
+
+    • Multi-scale. Surface roughness, trapped third-body particles, and coating layers introduce features from micrometres to millimetres.
+
+    • Tribology. Wear, adhesion, and fretting continually change the interface geometry and material state.
+
+    • Mathematics. The governing conditions are non-linear, non-smooth inequalities, which challenge standard Newton schemes.
+
+
+Slide 4 – Need for Robust, Fast, Accurate Frameworks
+
+    The complexity just outlined forces us to build numerical frameworks that are simultaneously
+    • robust – they converge for rough, highly-coupled interfaces,
+    • accurate – they enforce non-penetration and capture near-surface fields,
+    • fast – they solve industrial-scale models within practical memory and time.
+
+    Unfortunately, no single method satisfies all three goals in every situation. Each classical approach—penalty, Lagrange multiplier, augmented Lagrangian, FFT half-space—solves part of the puzzle and leaves another part weak.
+
+    To make the trade-offs explicit, the next section reviews these standard strategies and pinpoints their main limitations.
+
+
+Slide 5 – Signorini–Moreau Contact Conditions
+
+    Mathematically, unilateral friction-free contact is governed by the Signorini–Moreau inequalities.
+
+        Let g(x)g(x) be the normal gap, i.e. the signed distance between the two surfaces.
+        g(x)  ≥  0(no penetration)
+        g(x)≥0(no penetration)
+
+        Let σn(x)σn​(x) be the normal contact pressure (compression taken as negative).
+        σn(x)  ≤  0(no adhesion)
+        σn​(x)≤0(no adhesion)
+
+        The two fields are complementary:
+        g(x) σn(x)  =  0
+        g(x)σn​(x)=0
+
+        If the gap is positive, the pressure is zero; if the pressure is compressive, the gap is zero.
+
+Slide 6 – Classical Numerical Contact Methods
+
+    To enforce the Signorini–Moreau conditions in practice, several classical FEM‐based strategies are available.
+    The most common are penalty, Lagrange multiplier, augmented Lagrangian, and FFT half-space formulations.
+    Each method targets a different compromise between accuracy, robustness, and computational cost.
+    We begin with the simplest to implement—the penalty method.
+
+Slide 7 – Penalty Method
+
+    Idea.
+    Replace the non-penetration constraint by a fictitious spring that opposes overlap.
+
+    Constitutive law.
+    For a local gap gg:
+    σn  =  {−ε g(g<0)penetration0(g≥0)
+    σn​={−εg0​(g<0)penetration(g≥0)​
+
+    where ε>0ε>0 is the penalty stiffness.
+
+    Weak form.
+    The spring adds the quadratic energy
+    Πpen(u)=12 ε∫Γc⟨−g(u)⟩+2 dA,
+    Πpen​(u)=21​ε∫Γc​​⟨−g(u)⟩+2​dA,
+
+    which is appended to the elastic potential before taking first variations.
+
+    FEM discretisation.
+    No extra unknowns are introduced; the modified stiffness matrix differs from the pure elastic one only by additional diagonal terms on contact nodes.
+
+    Drawback.
+    Large εε values reduce penetration but severely ill-condition the global matrix; small values improve conditioning but violate the contact constraint.
+
+Slide 8 – Lagrange Multiplier Method
+
+    Idea.
+    Introduce a surface traction field λ as an additional unknown; enforce the gap constraint exactly through a saddle-point functional.
+
+    Functional.
+    L(u,λ)=Πelastic(u)+∫Γcλ g(u) dA.
+    L(u,λ)=Πelastic​(u)+∫Γc​​λg(u)dA.
+
+    Variation with respect to uu gives equilibrium including λnλn; variation with respect to λλ reproduces the Signorini–Moreau inequalities.
+
+    FEM discretisation.
+    Displacements uh=∑Niuiuh​=∑Ni​ui​ are paired with multiplier basis functions MjλjMj​λj​.
+    The resulting linear system is
+    (K−C ⁣⊤−C0)(uλ)=(fg),
+    (K−C​−C⊤0​)(uλ​)=(fg​),
+
+    where KK is positive-definite, CC couples normal displacements to the interface.
+
+    Pros. Exact non-penetration; no penalty parameter.
+    Cons. Extra unknowns on ΓcΓc​; matrix is indefinite; inf–sup stability must be respected; iterative or symmetric-indefinite direct solvers are required.
+
+Slide 9 – Augmented Lagrangian Method
+
+    Idea.
+    Combine the multiplier with a mild penalty to improve conditioning while still converging to the exact constraint.
+
+    Augmented functional.
+    Laug(u,λ)=Πelastic(u)+∫Γc ⁣[ 12εN⟨λ+εNg(u)⟩2−12εNλ2]dA.
+    Laug​(u,λ)=Πelastic​(u)+∫Γc​​[2εN​1​⟨λ+εN​g(u)⟩2−2εN​1​λ2]dA.
+
+    For a fixed λλ the problem in uu is positive-definite; λλ is updated by
+    λk+1=max⁡(0,  λk+εNg(uk+1))
+    λk+1=max(0,λk+εN​g(uk+1))
+
+    (Uzawa or Newton-like loop).
+
+    Numerical properties.
+    • Moderate εNεN​ improves matrix conditioning compared with a pure penalty.
+    • Exact gap is recovered as the outer loop converges.
+
+    Pros. No inf–sup restriction on interpolation; better conditioning than pure multipliers; penetration eliminated at convergence.
+    Cons. Still carries interface unknowns; requires choosing εNεN​; outer iterations add CPU time.

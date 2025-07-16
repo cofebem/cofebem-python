@@ -45,20 +45,20 @@ import logging
 from dolfinx.io import XDMFFile
 import mpi4py.MPI as MPI
 
-from cofebem.mesh.hollow_cylinder import generate_hollow_cylinder
+from cofebem.mesh.hollow_cylinder import hollow_cylinder
 
 
 # -------------------------------------------------------------------------------------------------------
 #  Mesh and material parameters
 # -------------------------------------------------------------------------------------------------------
-nr = 5
-nt = 70
+nr = 10
+nt = 80
 nz = 4
 
 r_inner = 1
 r_outer = 5
 
-generate_hollow_cylinder(nr, nt, nz, r_inner, r_outer)
+hollow_cylinder(nr, nt, nz, r_inner, r_outer)
 
 with XDMFFile(MPI.COMM_WORLD, "hex_hollow_cylinder.xdmf", "r") as xdmf:
     mesh = xdmf.read_mesh(name="Grid")
@@ -166,7 +166,6 @@ angles = (np.arctan2(Gamma_c_x[:, 1], Gamma_c_x[:, 0]) + 2 * np.pi) % (2 * np.pi
 order_angle = np.argsort(angles)
 Ic_sorted = Ic[order_angle]
 
-
 Ic_sorted = Ic_sorted.reshape(nt, nr + 1)
 
 Gamma_c_x_segments = mesh.geometry.x[Ic_sorted].reshape(nt, nr + 1, tdim)
@@ -225,12 +224,12 @@ def construct_Sc_from_Sc_ref(Sc_ref, nt, Ic):
     return Sc  # Sc_classic_unsorted
 
 
-# sym_start = time.perf_counter()
-# Sc_ref = compute_Sc_ref(problem.A, problem.b, Ic_ref, Ic_sorted, tdim, mesh.comm)
-# Sc = construct_Sc_from_Sc_ref(Sc_ref, nt, Ic)
+sym_start = time.perf_counter()
+Sc_ref = compute_Sc_ref(problem.A, problem.b, Ic_ref, Ic_sorted, tdim, mesh.comm)
+Sc = construct_Sc_from_Sc_ref(Sc_ref, nt, Ic)
 
-# sym_end = time.perf_counter()
-# sym_duration = sym_end - sym_start
+sym_end = time.perf_counter()
+sym_duration = sym_end - sym_start
 
 
 # -------------------------------------------------------------------------------------------------------
@@ -293,226 +292,226 @@ def Sc_direct_sampling(A, b, comm, tdim, Ic, full_Sc=False, single_direction=2):
     return Sc
 
 
-# classic_start = time.perf_counter()
+classic_start = time.perf_counter()
 
-# Sc_classic = Sc_direct_sampling(
-#     problem.A, problem.b, mesh.comm, tdim, Ic, full_Sc=False
-# )
+Sc_classic = Sc_direct_sampling(
+    problem.A, problem.b, mesh.comm, tdim, Ic, full_Sc=False
+)
 
-# classic_end = time.perf_counter()
+classic_end = time.perf_counter()
 
-# classic_duration = classic_end - classic_start
+classic_duration = classic_end - classic_start
 
-# error = np.linalg.norm(Sc_classic - Sc) / np.linalg.norm(Sc_classic)
+error = np.linalg.norm(Sc_classic - Sc) / np.linalg.norm(Sc_classic)
 
-# print(f"classic duration = {classic_duration}")
-# print(f"sym duration = {sym_duration}")
-# print(f"error = {error}")
+print(f"classic duration = {classic_duration}")
+print(f"sym duration = {sym_duration}")
+print(f"error = {error}")
 
 
 # -------------------------------------------------------------------------------------------------------
 #  Complexity Comparison
 # -------------------------------------------------------------------------------------------------------
 
-nts = np.linspace(5, 400, 30)
-dofs = np.linspace(nr * 5, nr * 400, 30)
-symmetry_times = []
-classic_times = []
+# nts = np.linspace(5, 400, 30)
+# dofs = np.linspace(nr * 5, nr * 400, 30)
+# symmetry_times = []
+# classic_times = []
 
-for nt in nts:
-    nt = int(nt)
-    # nr = nr * np.pi
-    # nr = int(nr)
-    # print(nr)
-    generate_hollow_cylinder(nr, nt, nz)
+# for nt in nts:
+#     nt = int(nt)
+#     # nr = nr * np.pi
+#     # nr = int(nr)
+#     # print(nr)
+#     generate_hollow_cylinder(nr, nt, nz)
 
-    with XDMFFile(MPI.COMM_WORLD, "hex_hollow_cylinder.xdmf", "r") as xdmf:
-        mesh = xdmf.read_mesh(name="Grid")
+#     with XDMFFile(MPI.COMM_WORLD, "hex_hollow_cylinder.xdmf", "r") as xdmf:
+#         mesh = xdmf.read_mesh(name="Grid")
 
-    tdim = mesh.topology.dim
-    fdim = tdim - 1
+#     tdim = mesh.topology.dim
+#     fdim = tdim - 1
 
-    E = 1.0
-    nu = 0.3
+#     E = 1.0
+#     nu = 0.3
 
-    lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
-    mu = E / (2 * (1 + nu))
+#     lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
+#     mu = E / (2 * (1 + nu))
 
-    element_type = "Lagrange"
-    element_degree = 1
+#     element_type = "Lagrange"
+#     element_degree = 1
 
-    V = functionspace(mesh, (element_type, element_degree, (mesh.geometry.dim,)))
+#     V = functionspace(mesh, (element_type, element_degree, (mesh.geometry.dim,)))
 
-    u, v = TrialFunction(V), TestFunction(V)
+#     u, v = TrialFunction(V), TestFunction(V)
 
-    def epsilon(v):
-        return sym(grad(v))
+#     def epsilon(v):
+#         return sym(grad(v))
 
-    def sigma(u):
-        return 2.0 * mu * epsilon(u) + lmbda * tr(epsilon(u)) * Identity(len(u))
+#     def sigma(u):
+#         return 2.0 * mu * epsilon(u) + lmbda * tr(epsilon(u)) * Identity(len(u))
 
-    def a(u, v):
-        return inner(sigma(u), epsilon(v)) * dx
+#     def a(u, v):
+#         return inner(sigma(u), epsilon(v)) * dx
 
-    f_v = Constant(mesh, np.array([0.0, 0.0, 0.0], dtype=PETSc.ScalarType))
+#     f_v = Constant(mesh, np.array([0.0, 0.0, 0.0], dtype=PETSc.ScalarType))
 
-    def L(v):
-        return inner(f_v, v) * dx
+#     def L(v):
+#         return inner(f_v, v) * dx
 
-    tol = 1.0e-5
+#     tol = 1.0e-5
 
-    def Gamma_u_selector(x):
-        return np.isclose(x[2], 0, atol=tol)
+#     def Gamma_u_selector(x):
+#         return np.isclose(x[2], 0, atol=tol)
 
-    Gamma_u = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_u_selector)
-    Iu = locate_dofs_topological(V, entity_dim=fdim, entities=Gamma_u)
+#     Gamma_u = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_u_selector)
+#     Iu = locate_dofs_topological(V, entity_dim=fdim, entities=Gamma_u)
 
-    u0 = np.array([0, 0, 0], dtype=PETSc.ScalarType)
+#     u0 = np.array([0, 0, 0], dtype=PETSc.ScalarType)
 
-    bc = dirichletbc(
-        u0,
-        dofs=Iu,
-        V=V,
-    )
+#     bc = dirichletbc(
+#         u0,
+#         dofs=Iu,
+#         V=V,
+#     )
 
-    problem = LinearProblem(
-        a=a(u, v),
-        L=L(v),
-        bcs=[bc],
-        petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
-    )
+#     problem = LinearProblem(
+#         a=a(u, v),
+#         L=L(v),
+#         bcs=[bc],
+#         petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+#     )
 
-    problem.solve()
+#     problem.solve()
 
-    angle_tol = 1.0e-8
-    tol = 1.0e-8
+#     angle_tol = 1.0e-8
+#     tol = 1.0e-8
 
-    def Gamma_c_selector(x):
-        return np.isclose(x[2], 1, atol=tol)
+#     def Gamma_c_selector(x):
+#         return np.isclose(x[2], 1, atol=tol)
 
-    Gamma_c = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_c_selector)
-    Ic = locate_dofs_topological(V, fdim, Gamma_c)
+#     Gamma_c = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_c_selector)
+#     Ic = locate_dofs_topological(V, fdim, Gamma_c)
 
-    def reference_line_selector(x):
-        return (
-            np.isclose(x[1], 0.0, atol=tol)
-            & np.isclose(x[2], 1.0, atol=tol)
-            & (x[0] > 0)
-        )
+#     def reference_line_selector(x):
+#         return (
+#             np.isclose(x[1], 0.0, atol=tol)
+#             & np.isclose(x[2], 1.0, atol=tol)
+#             & (x[0] > 0)
+#         )
 
-    Gamma_c_ref = locate_entities_boundary(mesh, fdim, reference_line_selector)
+#     Gamma_c_ref = locate_entities_boundary(mesh, fdim, reference_line_selector)
 
-    Ic_ref = locate_dofs_geometrical(V, reference_line_selector)
+#     Ic_ref = locate_dofs_geometrical(V, reference_line_selector)
 
-    Gamma_c_x = mesh.geometry.x[Ic]
-    Gamma_c_x = Gamma_c_x.reshape(-1, tdim)
-    angles = (np.arctan2(Gamma_c_x[:, 1], Gamma_c_x[:, 0]) + 2 * np.pi) % (2 * np.pi)
-    order_angle = np.argsort(angles)
-    Ic_sorted = Ic[order_angle]
+#     Gamma_c_x = mesh.geometry.x[Ic]
+#     Gamma_c_x = Gamma_c_x.reshape(-1, tdim)
+#     angles = (np.arctan2(Gamma_c_x[:, 1], Gamma_c_x[:, 0]) + 2 * np.pi) % (2 * np.pi)
+#     order_angle = np.argsort(angles)
+#     Ic_sorted = Ic[order_angle]
 
-    Ic_sorted = Ic_sorted.reshape(nt, nr + 1)
+#     Ic_sorted = Ic_sorted.reshape(nt, nr + 1)
 
-    Gamma_c_x_segments = mesh.geometry.x[Ic_sorted].reshape(nt, nr + 1, tdim)
-    radii = np.sqrt(Gamma_c_x_segments[:, :, 0] ** 2 + Gamma_c_x_segments[:, :, 1] ** 2)
+#     Gamma_c_x_segments = mesh.geometry.x[Ic_sorted].reshape(nt, nr + 1, tdim)
+#     radii = np.sqrt(Gamma_c_x_segments[:, :, 0] ** 2 + Gamma_c_x_segments[:, :, 1] ** 2)
 
-    order_radius = np.argsort(radii, axis=1)
-    Ic_sorted = np.take_along_axis(Ic_sorted, order_radius, axis=1).flatten()
+#     order_radius = np.argsort(radii, axis=1)
+#     Ic_sorted = np.take_along_axis(Ic_sorted, order_radius, axis=1).flatten()
 
-    sym_start = time.perf_counter()
-    Sc_ref = compute_Sc_ref(problem.A, problem.b, Ic_ref, Ic_sorted, tdim, mesh.comm)
-    Sc = construct_Sc_from_Sc_ref(Sc_ref, nt, Ic)
+#     sym_start = time.perf_counter()
+#     Sc_ref = compute_Sc_ref(problem.A, problem.b, Ic_ref, Ic_sorted, tdim, mesh.comm)
+#     Sc = construct_Sc_from_Sc_ref(Sc_ref, nt, Ic)
 
-    sym_end = time.perf_counter()
-    sym_duration = sym_end - sym_start
+#     sym_end = time.perf_counter()
+#     sym_duration = sym_end - sym_start
 
-    classic_start = time.perf_counter()
+#     classic_start = time.perf_counter()
 
-    Sc_classic = Sc_direct_sampling(
-        problem.A, problem.b, mesh.comm, tdim, Ic_sorted, full_Sc=False
-    )
+#     Sc_classic = Sc_direct_sampling(
+#         problem.A, problem.b, mesh.comm, tdim, Ic_sorted, full_Sc=False
+#     )
 
-    classic_end = time.perf_counter()
+#     classic_end = time.perf_counter()
 
-    classic_duration = classic_end - classic_start
+#     classic_duration = classic_end - classic_start
 
-    error = np.linalg.norm(Sc_classic - Sc) / np.linalg.norm(Sc_classic)
+#     error = np.linalg.norm(Sc_classic - Sc) / np.linalg.norm(Sc_classic)
 
-    symmetry_times.append(sym_duration)
-    classic_times.append(classic_duration)
+#     symmetry_times.append(sym_duration)
+#     classic_times.append(classic_duration)
 
-    print(f"classic duration = {classic_duration}")
-    print(f"sym duration = {sym_duration}")
-    print(f"error = {error}")
-    print(f"-------------------------------------------------------")
+#     print(f"classic duration = {classic_duration}")
+#     print(f"sym duration = {sym_duration}")
+#     print(f"error = {error}")
+#     print(f"-------------------------------------------------------")
 
-x_lin = np.linspace(100, 1600, 10)
-# Shifted reference power curves to start at the same point as the first data point
-symmetry_times = np.asarray(symmetry_times)
-classic_times = np.asarray(classic_times)
-shift_value = symmetry_times[0]  # classic_times[0]
-power_1 = x_lin / x_lin[0] * shift_value
-power_2 = (x_lin / x_lin[0]) ** 2 * shift_value
-
+# x_lin = np.linspace(100, 1600, 10)
+# # Shifted reference power curves to start at the same point as the first data point
+# symmetry_times = np.asarray(symmetry_times)
+# classic_times = np.asarray(classic_times)
+# shift_value = symmetry_times[0]  # classic_times[0]
 # power_1 = x_lin / x_lin[0] * shift_value
 # power_2 = (x_lin / x_lin[0]) ** 2 * shift_value
 
-# Create the figure and axis
-fig, ax = plt.subplots(figsize=(4, 3))
+# # power_1 = x_lin / x_lin[0] * shift_value
+# # power_2 = (x_lin / x_lin[0]) ** 2 * shift_value
 
-# Plot the data
-ax.plot(dofs, classic_times, "o-", label="Classic Sc", markersize=6, linewidth=2)
-ax.plot(
-    dofs,
-    symmetry_times,
-    "s-",
-    label="Sc enhaced by Symmetry",
-    markersize=6,
-    linewidth=2,
-)
+# # Create the figure and axis
+# fig, ax = plt.subplots(figsize=(4, 3))
 
-ax.plot(x_lin, power_1, "--", color="black")  # label="O(N)")
-ax.plot(x_lin, power_2, "-.", color="black")  # label="O(N²)")  # Annotate power curves
+# # Plot the data
+# ax.plot(dofs, classic_times, "o-", label="Classic Sc", markersize=6, linewidth=2)
+# ax.plot(
+#     dofs,
+#     symmetry_times,
+#     "s-",
+#     label="Sc enhaced by Symmetry",
+#     markersize=6,
+#     linewidth=2,
+# )
 
-ax.text(
-    dofs[-1],
-    power_1[-1],
-    "O(N)",
-    fontsize=8,
-    color="black",
-    verticalalignment="bottom",
-    horizontalalignment="right",
-)
-ax.text(
-    dofs[-1],
-    power_2[-1],
-    "O(N²)",
-    fontsize=8,
-    color="black",
-    verticalalignment="bottom",
-    horizontalalignment="right",
-)
+# ax.plot(x_lin, power_1, "--", color="black")  # label="O(N)")
+# ax.plot(x_lin, power_2, "-.", color="black")  # label="O(N²)")  # Annotate power curves
 
-# Logarithmic scale for better readability
-ax.set_xscale("log")
-ax.set_yscale("log")
+# ax.text(
+#     dofs[-1],
+#     power_1[-1],
+#     "O(N)",
+#     fontsize=8,
+#     color="black",
+#     verticalalignment="bottom",
+#     horizontalalignment="right",
+# )
+# ax.text(
+#     dofs[-1],
+#     power_2[-1],
+#     "O(N²)",
+#     fontsize=8,
+#     color="black",
+#     verticalalignment="bottom",
+#     horizontalalignment="right",
+# )
 
-# Labels and title
-ax.set_xlabel("Degrees of Freedom (DoFs)", fontsize=8)
-ax.set_ylabel("CPU Time (s)", fontsize=8)
+# # Logarithmic scale for better readability
+# ax.set_xscale("log")
+# ax.set_yscale("log")
 
-ax.set_title("Comparison of Classic and Symmetry Methods for Sc", fontsize=16)
+# # Labels and title
+# ax.set_xlabel("Degrees of Freedom (DoFs)", fontsize=8)
+# ax.set_ylabel("CPU Time (s)", fontsize=8)
 
-# Grid and legend
-ax.grid(True, which="both", linestyle="--", linewidth=0.5)
-ax.legend(fontsize=8, loc="upper left")
+# ax.set_title("Comparison of Classic and Symmetry Methods for Sc", fontsize=16)
 
-# Improve layout
-plt.tight_layout()
+# # Grid and legend
+# ax.grid(True, which="both", linestyle="--", linewidth=0.5)
+# ax.legend(fontsize=8, loc="upper left")
 
-fig.savefig("Sc_by_symmetry.png", format="png")
+# # Improve layout
+# plt.tight_layout()
 
-# Show the plot
-plt.show()
+# fig.savefig("Sc_by_symmetry.png", format="png")
+
+# # Show the plot
+# plt.show()
 
 
 # # -------------------------------------------------------------------------------------------------------
