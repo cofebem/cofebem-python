@@ -36,12 +36,12 @@ r_inner = 2
 r_outer = 5
 
 nr = 40
-nt = 40  # int((r_inner + r_outer) * nr * np.pi / (r_outer - r_inner))
+nt = 40  # int((r_inner + r_outer) * nr * np.pi / (r_outer - r_inner))A=0.12, B=0.07, kr =9, kt = 4
 print(nt)
 nz = 3
 
 rough_hollow_cylinder(
-    nr, nt, nz, r_inner=r_inner, r_outer=r_outer, A=0.12, B=0.07, k_r=20, k_theta=4
+    nr, nt, nz, r_inner=r_inner, r_outer=r_outer, A=0.06, B=0.07, k_r=14, k_theta=4
 )
 
 with XDMFFile(MPI.COMM_WORLD, "rough_hollow_cylinder.xdmf", "r") as xdmf:

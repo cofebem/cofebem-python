@@ -26,7 +26,7 @@ from cofebem.mesh.hollow_cylinder import hollow_cylinder
 from cofebem.contact.Sc import Sc
 from cofebem.contact.rigid_indenters import parabolic
 from cofebem.contact.lcp_solvers.ccg import CCG
-from cofebem.hmatrices.cluster import HMatrix
+from cofebem.hmatrices.cluster_tree import HMatrix
 
 
 # -------------------------------------------------------------------------------------------------------
