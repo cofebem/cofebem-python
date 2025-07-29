@@ -1,2 +1,4 @@
 test/out_elasticity/
+*.egg-info/
+__pycache__/
 

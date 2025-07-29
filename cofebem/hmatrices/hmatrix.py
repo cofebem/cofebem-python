@@ -122,7 +122,7 @@ class HMatrix:
             "memory": self.block_tree.memory(),
         }
 
-    def visualize(self, save_path=None):
+    def visualize(self, save_path=None, dpi=300):
         n = len(self.pts)
 
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -163,6 +163,9 @@ class HMatrix:
         ax.set_title("ℋ‑matrix block structure")
 
         if save_path is not None:
-            fig.savefig(save_path)
+            if save_path.endswith(".png") or save_path.endswith(".jpg"):
+                fig.savefig(save_path, dpi=dpi)
+            else:
+                fig.savefig(save_path)
 
         plt.show()

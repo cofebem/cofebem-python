@@ -118,7 +118,7 @@ def plot_heatmap(
 
 if __name__ == "__main__":
 
-    mesh = meshio.read("hollow_cylinder.xdmf")
+    mesh = meshio.read("../hollow_cylinder.xdmf")
     pts = mesh.points
     cells = mesh.cells
 
@@ -129,6 +129,21 @@ if __name__ == "__main__":
     leaf_grid = [8, 16, 32, 64]
     eta_grid = [0.5, 0.7, 1.0, 1.5]
     repeats = 3
+
+    LEAF_SIZE = [8, 64]
+    for leaf_size in LEAF_SIZE:
+        print(f"\nRunning H-matrix with leaf_size={leaf_size}...")
+        hmat = HMatrix(
+            pts,
+            A_full,
+            leaf_size=leaf_size,
+            eta=1.0,
+            tol=1e-6,
+            split="pca",
+            lr_approx="aca_partial",
+        )
+        hmat.visualize(f"hmat_example_{leaf_size}.pdf")
+    exit(1)
 
     print("\nRunning grid benchmark...")
     times_H, times_py, rel_errs = benchmark_grid(
