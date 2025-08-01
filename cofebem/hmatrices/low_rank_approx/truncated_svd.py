@@ -1,6 +1,5 @@
-from typing import Tuple
-
 import numpy as np
+from typing import Tuple
 
 
 def truncated_svd(
@@ -9,14 +8,12 @@ def truncated_svd(
     k_max: int = 50,
 ) -> Tuple[np.ndarray, np.ndarray]:
 
-    U_full, S, Vh = np.linalg.svd(A, full_matrices=False)
+    U, S, Vh = np.linalg.svd(A, full_matrices=False)
 
-    r = int(np.sum(S > tol * S[0]))
-    r = min(r, k_max)
+    r = min(int(np.sum(S > tol * S[0])), k_max)
 
-    sqrt_S = np.sqrt(S[:r])
+    sqrt_S = np.diag(np.sqrt(S[:r]))
 
-    U = U_full[:, :r] * sqrt_S
-    V = (Vh[:r, :].T) * sqrt_S
+    Ut, Vt = U[:, :r] @ sqrt_S, sqrt_S @ Vh[:r, :]
 
-    return U, V
+    return Ut, Vt.T

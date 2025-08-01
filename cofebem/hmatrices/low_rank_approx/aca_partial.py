@@ -48,6 +48,6 @@ def aca_partial(
         j_curr = np.abs(v_k).argmax()
 
     U = np.column_stack(U_cols)
-    V = np.vstack(V_rows)
+    V = np.column_stack(V_rows)
 
     return U, V

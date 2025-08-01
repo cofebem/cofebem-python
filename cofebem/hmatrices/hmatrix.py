@@ -9,7 +9,32 @@ from .cluster_tree import ClusterTree
 from .block_cluster_tree import BlockClusterTree
 
 
-@njit
+def MatVec_(A: np.ndarray, x: np.ndarray) -> np.ndarray:
+    m, n = A.shape
+
+    if x.ndim == 2:
+        if x.shape[1] != 1:
+            raise ValueError("x must be (n,) or (n,1).")
+        x_flat = x[:, 0]
+    elif x.ndim == 1:
+        x_flat = x
+    else:
+        raise ValueError("x must be (n,) or (n,1).")
+
+    if x_flat.shape[0] != n:
+        raise ValueError("Dimension mismatch: A is (m, n) but x length is not n.")
+
+    b = np.empty(m, dtype=A.dtype)
+
+    for i in range(m):
+        acc = 0.0
+        for j in range(n):
+            acc += A[i, j] * x_flat[j]
+        b[i] = acc
+    return b
+
+
+# @njit
 def _hmatvec_numba(nb_rows, nb_cols, nb_kinds, nb_U, nb_V, nb_D, x, y):
     for k in range(len(nb_kinds)):
         rows = nb_rows[k]
@@ -48,7 +73,7 @@ class HMatrix:
             self.tree, self.tree, A, eta=eta, tol=tol, lr_approx=lr_approx
         )
 
-        self._prepare_numba()
+        # self._prepare_numba()
 
     def _prepare_numba(self):
         self._nb_rows = NbList()
@@ -77,40 +102,40 @@ class HMatrix:
 
         self._nb_kinds = np.array(kinds_py, dtype=np.int8)
 
-    # def __matmul__(self, x):
-    #     if x.shape[0] != len(self.pts):
-    #         raise ValueError("size mismatch")
-    #     y = np.zeros_like(x, dtype=float)
-    #     for bl in self.block_tree.blocks:
-    #         y[bl.row.idx] += bl.matvec(x[bl.col.idx])
-    #     return y
-
     def __matmul__(self, x):
-        if x.ndim != 1:
-            raise ValueError("Use a 1‑D vector on the right‑hand side.")
         if x.shape[0] != len(self.pts):
-            raise ValueError(
-                "Size mismatch: got |x| = %d, expected %d" % (x.shape[0], len(self.pts))
-            )
-
+            raise ValueError("size mismatch")
         y = np.zeros_like(x, dtype=float)
-
-        try:
-            _hmatvec_numba(
-                self._nb_rows,
-                self._nb_cols,
-                self._nb_kinds,
-                self._nb_U,
-                self._nb_V,
-                self._nb_D,
-                x,
-                y,
-            )
-        except Exception:
-            for bl in self.block_tree.blocks:
-                y[bl.row.idx] += bl.matvec(x[bl.col.idx])
-
+        for bl in self.block_tree.blocks:
+            y[bl.row.idx] += bl.matvec(x[bl.col.idx])
         return y
+
+    # def __matmul__(self, x):
+    #     if x.ndim != 1:
+    #         raise ValueError("Use a 1‑D vector on the right‑hand side.")
+    #     if x.shape[0] != len(self.pts):
+    #         raise ValueError(
+    #             "Size mismatch: got |x| = %d, expected %d" % (x.shape[0], len(self.pts))
+    #         )
+
+    #     y = np.zeros_like(x, dtype=float)
+
+    #     try:
+    #         _hmatvec_numba(
+    #             self._nb_rows,
+    #             self._nb_cols,
+    #             self._nb_kinds,
+    #             self._nb_U,
+    #             self._nb_V,
+    #             self._nb_D,
+    #             x,
+    #             y,
+    #         )
+    #     except Exception:
+    #         for bl in self.block_tree.blocks:
+    #             y[bl.row.idx] += bl.matvec(x[bl.col.idx])
+
+    #     return y
 
     def stats(self):
         lr = sum(bl.kind == "lr" for bl in self.block_tree.blocks)

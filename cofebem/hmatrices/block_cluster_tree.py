@@ -10,6 +10,31 @@ from .low_rank_approx.aca_gp import aca_gp
 from .low_rank_approx.truncated_svd import truncated_svd
 
 
+def matvec_(A: np.ndarray, x: np.ndarray) -> np.ndarray:
+    m, n = A.shape
+
+    if x.ndim == 2:
+        if x.shape[1] != 1:
+            raise ValueError("x must be (n,) or (n,1).")
+        x_flat = x[:, 0]
+    elif x.ndim == 1:
+        x_flat = x
+    else:
+        raise ValueError("x must be (n,) or (n,1).")
+
+    if x_flat.shape[0] != n:
+        raise ValueError("Dimension mismatch: A is (m, n) but x length is not n.")
+
+    b = np.empty(m, dtype=A.dtype)
+
+    for i in range(m):
+        acc = 0.0
+        for j in range(n):
+            acc += A[i, j] * x_flat[j]
+        b[i] = acc
+    return b
+
+
 @dataclass
 class Block:
     row: Cluster
@@ -31,8 +56,8 @@ class Block:
 
     def matvec(self, x):
         if self.kind == "lr":
-            return self.U @ (self.V @ x)
-        return self.dense @ x
+            return matvec_(self.U, (matvec_(self.V.T, x)))
+        return matvec_(self.dense, x)
 
 
 class BlockClusterTree:

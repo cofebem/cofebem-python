@@ -40,6 +40,6 @@ def aca_full(
             break
 
     U = np.column_stack(U_cols)
-    V = np.vstack(V_rows)
+    V = np.column_stack(V_rows)
 
     return U, V

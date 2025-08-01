@@ -1,5 +1,5 @@
 import time
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Callable
 
 import numpy as np
 import meshio
@@ -30,18 +30,17 @@ def MatVec(A: np.ndarray, x: np.ndarray) -> np.ndarray:
         for j in range(n):
             acc += A[i, j] * x_flat[j]
         b[i] = acc
-        # acc = 0.0
     return b
 
 
-def time_once(func, *args, **kwargs) -> float:
+def time_once(func: Callable, *args, **kwargs) -> float:
     t0 = time.perf_counter()
     func(*args, **kwargs)
     t1 = time.perf_counter()
     return t1 - t0
 
 
-def time_average(func, repeats: int, *args, **kwargs) -> float:
+def time_average(func: Callable, repeats: int, *args, **kwargs) -> float:
     # One warm-up (especially for Numba JIT)
     func(*args, **kwargs)
     acc = 0.0
@@ -56,7 +55,7 @@ def benchmark_grid(
     leaf_grid: List[int],
     eta_grid: List[float],
     tol: float = 1e-6,
-    split: str = "kd",
+    split: str = "pca",
     repeats: int = 3,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 
@@ -78,7 +77,7 @@ def benchmark_grid(
                 eta=eta,
                 tol=tol,
                 split=split,
-                lr_approx="aca_partial",
+                lr_approx="aca_full",
             )
             # average apply time
             t_h = time_average(lambda vec: hm @ vec, repeats, v)
@@ -118,7 +117,7 @@ def plot_heatmap(
 
 if __name__ == "__main__":
 
-    mesh = meshio.read("../hollow_cylinder.xdmf")
+    mesh = meshio.read("hollow_cylinder.xdmf")
     pts = mesh.points
     cells = mesh.cells
 
@@ -128,22 +127,7 @@ if __name__ == "__main__":
 
     leaf_grid = [8, 16, 32, 64]
     eta_grid = [0.5, 0.7, 1.0, 1.5]
-    repeats = 3
-
-    LEAF_SIZE = [8, 64]
-    for leaf_size in LEAF_SIZE:
-        print(f"\nRunning H-matrix with leaf_size={leaf_size}...")
-        hmat = HMatrix(
-            pts,
-            A_full,
-            leaf_size=leaf_size,
-            eta=1.0,
-            tol=1e-6,
-            split="pca",
-            lr_approx="aca_partial",
-        )
-        hmat.visualize(f"hmat_example_{leaf_size}.pdf")
-    exit(1)
+    repeats = 5
 
     print("\nRunning grid benchmark...")
     times_H, times_py, rel_errs = benchmark_grid(
