@@ -26,7 +26,7 @@ from cofebem.mesh.hollow_cylinder import hollow_cylinder
 from cofebem.contact.Sc import Sc
 from cofebem.contact.rigid_indenters import parabolic
 from cofebem.contact.lcp_solvers.ccg import CCG
-from cofebem.hmatrices.cluster_tree import HMatrix
+from cofebem.hmatrices.hmatrix import HMatrix
 
 
 # -------------------------------------------------------------------------------------------------------
@@ -213,13 +213,8 @@ sym_end = time.perf_counter()
 sym_duration = sym_end - sym_start
 
 
-# Plot heatmap
-plt.imshow(Sc_dense, cmap="viridis", aspect="auto")
-plt.colorbar()
-plt.show()
-
-# Sc_hm = HMatrix.from_dense(Sc_dense, Gamma_c_x, Gamma_c, leaf=32, eta=1.7)
-# print("stats:", Sc_hm.stats())
+Sc_hm = HMatrix(Gamma_c_x, Sc_dense, leaf_size=80, eta=1.7)
+print("stats:", Sc_hm.stats())
 
 # -------------------------------------------------------------------------------------------------------
 #  Construct S_c classic

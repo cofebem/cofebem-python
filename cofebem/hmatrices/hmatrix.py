@@ -9,32 +9,7 @@ from .cluster_tree import ClusterTree
 from .block_cluster_tree import BlockClusterTree
 
 
-def MatVec_(A: np.ndarray, x: np.ndarray) -> np.ndarray:
-    m, n = A.shape
-
-    if x.ndim == 2:
-        if x.shape[1] != 1:
-            raise ValueError("x must be (n,) or (n,1).")
-        x_flat = x[:, 0]
-    elif x.ndim == 1:
-        x_flat = x
-    else:
-        raise ValueError("x must be (n,) or (n,1).")
-
-    if x_flat.shape[0] != n:
-        raise ValueError("Dimension mismatch: A is (m, n) but x length is not n.")
-
-    b = np.empty(m, dtype=A.dtype)
-
-    for i in range(m):
-        acc = 0.0
-        for j in range(n):
-            acc += A[i, j] * x_flat[j]
-        b[i] = acc
-    return b
-
-
-# @njit
+@njit
 def _hmatvec_numba(nb_rows, nb_cols, nb_kinds, nb_U, nb_V, nb_D, x, y):
     for k in range(len(nb_kinds)):
         rows = nb_rows[k]
@@ -73,7 +48,7 @@ class HMatrix:
             self.tree, self.tree, A, eta=eta, tol=tol, lr_approx=lr_approx
         )
 
-        # self._prepare_numba()
+        self._prepare_numba()
 
     def _prepare_numba(self):
         self._nb_rows = NbList()
@@ -108,6 +83,17 @@ class HMatrix:
         y = np.zeros_like(x, dtype=float)
         for bl in self.block_tree.blocks:
             y[bl.row.idx] += bl.matvec(x[bl.col.idx])
+        return y
+
+    def matvec_overhead(self, x):
+        # measure overhead = looping + broadcasting (no arithmetic)
+        y = np.zeros_like(x, dtype=float)
+        s = 0.0
+        for bl in self.block_tree.blocks:
+            rows = bl.row.idx
+            cols = bl.col.idx
+            s += float(np.sum(x[cols])) * 0.0
+            y[rows] += 0.0
         return y
 
     # def __matmul__(self, x):

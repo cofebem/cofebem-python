@@ -276,7 +276,7 @@ mesh_center = np.mean(Gamma_x, axis=0)  # works only if the mesh has a convex ge
 G = np.zeros((tdim * n_collocs, tdim * n_collocs))
 H = np.zeros((tdim * n_collocs, tdim * n_collocs))
 
-n_gauss = 7
+n_gauss = 3
 
 for i, x_c_id in tqdm(
     enumerate(I_Gamma),

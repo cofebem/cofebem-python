@@ -55,6 +55,9 @@ class Block:
         return self.dense.size
 
     def matvec(self, x):
+        # if self.kind == "lr":
+        #     return self.U @ (self.V.T @ x)
+        # return self.dense @ x
         if self.kind == "lr":
             return matvec_(self.U, (matvec_(self.V.T, x)))
         return matvec_(self.dense, x)
