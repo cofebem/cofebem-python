@@ -25,7 +25,7 @@ def mesh_dim(mesh):
     return max(dims)
 
 
-mesh = meshio.read("fine_sphere.msh")
+mesh = meshio.read("fine2_sphere.msh")
 
 cell_type = (
     "triangle"
@@ -64,7 +64,7 @@ mu = E / (2 * (1 + nu))
 def kelvin_G(x, y, normal, mu, nu):
     x = np.asarray(x)
     y = np.asarray(y)
-    r = x - y
+    r = y - x
     r_norm = np.linalg.norm(r)
 
     if r_norm < 1e-12:
@@ -84,7 +84,7 @@ def kelvin_H(x, y, normal, mu, nu):
     y = np.asarray(y, dtype=float)
     normal = np.asarray(normal, dtype=float)
 
-    r = x - y
+    r = y - x
     r_norm = np.linalg.norm(r)
 
     if r_norm < 1e-12:
@@ -97,6 +97,10 @@ def kelvin_H(x, y, normal, mu, nu):
         np.dot(r, normal) * ((1 - 2 * nu) * I + 3 * np.outer(r, r) / r_norm**2) / r_norm
     )
     term2 = (1 - 2 * nu) * (np.outer(r, normal) - np.outer(normal, r)) / r_norm
+
+    # factor = 1 / (8 * np.pi * (1 - nu) * r_norm**3)
+    # term1 = np.dot(r, normal) * ((1 - 2 * nu) * I + 3 * np.outer(r, r) / r_norm**2)
+    # term2 = (1 - 2 * nu) * (np.outer(r, normal) - np.outer(normal, r))
 
     H = factor * (term1 - term2)
 
@@ -195,6 +199,92 @@ def dunavant_rule(degree: int):
         )
         w = np.array([w1, w1, w1, w2, w2, w2, 0.1125], dtype=float)
 
+    elif degree == 13:
+        pts = np.array(
+            [
+                [0.333333333333333333333333333333, 0.333333333333333333333333333333],
+                [0.950275662924105565450352089520, 0.024862168537947217274823955239],
+                [0.024862168537947217274823955239, 0.950275662924105565450352089520],
+                [0.024862168537947217274823955239, 0.024862168537947217274823955239],
+                [0.171614914923835347556304795551, 0.414192542538082326221847602214],
+                [0.414192542538082326221847602214, 0.171614914923835347556304795551],
+                [0.414192542538082326221847602214, 0.414192542538082326221847602214],
+                [0.539412243677190440263092985511, 0.230293878161404779868453507244],
+                [0.230293878161404779868453507244, 0.539412243677190440263092985511],
+                [0.230293878161404779868453507244, 0.230293878161404779868453507244],
+                [0.772160036676532561750285570113, 0.113919981661733719124857214943],
+                [0.113919981661733719124857214943, 0.772160036676532561750285570113],
+                [0.113919981661733719124857214943, 0.113919981661733719124857214943],
+                [0.009085399949835353883572964740, 0.495457300025082323058213517632],
+                [0.495457300025082323058213517632, 0.009085399949835353883572964740],
+                [0.495457300025082323058213517632, 0.495457300025082323058213517632],
+                [0.062277290305886993497083640527, 0.468861354847056503251458179727],
+                [0.468861354847056503251458179727, 0.062277290305886993497083640527],
+                [0.468861354847056503251458179727, 0.468861354847056503251458179727],
+                [0.022076289653624405142446876931, 0.851306504174348550389457672223],
+                [0.022076289653624405142446876931, 0.126617206172027096933163647918],
+                [0.851306504174348550389457672223, 0.022076289653624405142446876931],
+                [0.126617206172027096933163647918, 0.851306504174348550389457672223],
+                [0.851306504174348550389457672223, 0.126617206172027096933163647918],
+                [0.126617206172027096933163647918, 0.022076289653624405142446876931],
+                [0.018620522802520968955913511549, 0.689441970728591295496647976487],
+                [0.018620522802520968955913511549, 0.291937506468887771754472382212],
+                [0.689441970728591295496647976487, 0.018620522802520968955913511549],
+                [0.291937506468887771754472382212, 0.689441970728591295496647976487],
+                [0.689441970728591295496647976487, 0.291937506468887771754472382212],
+                [0.291937506468887771754472382212, 0.018620522802520968955913511549],
+                [0.096506481292159228736516560903, 0.635867859433872768286976979827],
+                [0.096506481292159228736516560903, 0.267625659273967961282458816185],
+                [0.635867859433872768286976979827, 0.096506481292159228736516560903],
+                [0.267625659273967961282458816185, 0.635867859433872768286976979827],
+                [0.635867859433872768286976979827, 0.267625659273967961282458816185],
+                [0.267625659273967961282458816185, 0.096506481292159228736516560903],
+            ]
+        )
+
+        w_raw = np.array(
+            [
+                0.051739766065744133555179145422,
+                0.008007799555564801597804123460,
+                0.008007799555564801597804123460,
+                0.008007799555564801597804123460,
+                0.046868898981821644823226732071,
+                0.046868898981821644823226732071,
+                0.046868898981821644823226732071,
+                0.046590940183976487960361770070,
+                0.046590940183976487960361770070,
+                0.046590940183976487960361770070,
+                0.031016943313796381407646220131,
+                0.031016943313796381407646220131,
+                0.031016943313796381407646220131,
+                0.010791612736631273623178240136,
+                0.010791612736631273623178240136,
+                0.010791612736631273623178240136,
+                0.032195534242431618819414482205,
+                0.032195534242431618819414482205,
+                0.032195534242431618819414482205,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+            ]
+        )
+        w = 0.5 * w_raw
+
     else:
         return dunavant_rule(5)
 
@@ -258,21 +348,21 @@ def closest_point_on_triangle(p, a, b, c):
     return q, (u, v, w), np.linalg.norm(p - q)
 
 
-def duffy_map_corner(corner, rho, tau):
+def duffy_map_corner(corner, u, v):
 
     if corner == 0:
-        xi = rho * tau
-        eta = rho * (1.0 - tau)
-        J = rho
+        xi1 = u * (1 - v)
+        xi2 = u * v
+        J = u
     elif corner == 1:
-        xi = 1.0 - rho
-        eta = rho * tau
-        J = rho
+        xi1 = 1.0 - u
+        xi2 = u * v
+        J = u
     else:  # corner == 2
-        xi = rho * (1.0 - tau)
-        eta = 1.0 - rho
-        J = rho
-    return xi, eta, J
+        xi1 = u * v
+        xi2 = 1.0 - u
+        J = u
+    return xi1, xi2, J
 
 
 gauss_pts, gauss_wts = np.polynomial.legendre.leggauss(3)
@@ -286,8 +376,139 @@ def legendre_on_01(n):
     return 0.5 * (x + 1.0), 0.5 * w
 
 
-GL_N = 5
+GL_N = 10
 t_1d, w_1d = legendre_on_01(GL_N)
+
+
+# ----------------------------- Strong Sing quadrature -----------------------------
+def gl_interval(n, a, b):
+    """Gauss–Legendre nodes/weights on [a,b]."""
+    x, w = np.polynomial.legendre.leggauss(n)
+    # map from [-1,1] to [a,b]
+    xm = 0.5 * (b - a) * x + 0.5 * (a + b)
+    wm = 0.5 * (b - a) * w
+    return xm, wm
+
+
+def reorder_triangle_for_corner(elem, sing_corner):
+
+    if sing_corner == 0:
+        return elem.copy()
+    elif sing_corner == 1:
+        # (1,2,0)
+        return np.vstack([elem[1], elem[2], elem[0]])
+    else:  # sing_corner == 2
+        # (2,0,1)
+        return np.vstack([elem[2], elem[0], elem[1]])
+
+
+def triangle_edge_vectors(elem_loc0):
+
+    p0, p1, p2 = elem_loc0
+    a = p1 - p0
+    b = p2 - p0
+    cx = np.cross(a, b)
+    J_geo = np.linalg.norm(cx)
+    if J_geo == 0.0:
+        raise ValueError("Degenerate triangle in CPV routine (zero area).")
+    n_tri = cx / J_geo
+    return a, b, J_geo, n_tri
+
+
+def A_theta(a, b, theta):
+
+    c, s = np.cos(theta), np.sin(theta)
+    Av = a * c + b * s  # 3-vector
+    return np.linalg.norm(Av), Av
+
+
+# ----------------------------- Guiggiani CPV for H on a single P1 triangle -----------------------------
+def guiggiani_H_triangle(
+    xc,
+    elem,
+    normal,
+    sing_corner,
+    loc_idx,
+    mu,
+    nu,
+    n_theta=16,
+    n_rho=16,
+):
+    """
+    Direct CPV evaluation of the traction kernel H for a single P1 triangle
+    when the collocation is at a triangle vertex (Guiggiani & Gigante, 1990, Eq. (20e)).
+
+    Returns: 3x3 matrix, or None if this is not the singular basis.
+    """
+
+    if loc_idx != sing_corner:
+        return None
+
+    E = reorder_triangle_for_corner(elem, sing_corner)
+    p0, p1, p2 = E[0], E[1], E[2]
+
+    a, b, J_geo, _ = triangle_edge_vectors(E)
+
+    n = normal / np.linalg.norm(normal)
+
+    factor = -1.0 / (8.0 * np.pi * (1.0 - nu))
+    I3 = np.eye(3)
+    one_minus_2nu = 1.0 - 2.0 * nu
+
+    thetas, wtheta = gl_interval(n_theta, 0.0, 0.5 * np.pi)
+
+    I_1D = np.zeros((3, 3))
+    I_2D = np.zeros((3, 3))
+
+    tiny = 1e-14
+
+    for th, wth in zip(thetas, wtheta):
+        c, s = np.cos(th), np.sin(th)
+        denom = c + s
+        if denom < tiny:
+            continue  # avoid blowup right at the axes
+
+        A_val, Av = A_theta(a, b, th)
+        if A_val < 1e-15:
+            continue  # degenerate direction
+
+        rhat = Av / A_val
+        n_dot_Av = float(np.dot(n, Av))
+
+        outer_rhat = np.outer(rhat, rhat)
+        term_leading = n_dot_Av * (
+            one_minus_2nu * I3 + 3.0 * outer_rhat
+        ) - one_minus_2nu * (np.outer(Av, n) - np.outer(n, Av))
+        f_theta = factor * (J_geo / (A_val**3)) * term_leading  # 3x3
+
+        rho_max = 1.0 / denom
+
+        I_1D += f_theta * np.log(max(tiny, rho_max * A_val)) * wth
+
+        rhos, wrho = gl_interval(n_rho, 0.0, rho_max)
+        accum_rho = np.zeros((3, 3))
+        for rho, wr in zip(rhos, wrho):
+            if rho < tiny:
+                continue
+
+            xi = rho * c
+            eta = rho * s
+
+            y = map_to_physical_3d(E, xi, eta)
+
+            N_local = 1.0 - xi - eta
+            if N_local < 0.0:
+                N_local = 0.0
+
+            Hmat = kelvin_H(xc, y, n, mu, nu)  # 3x3
+
+            F = Hmat * (N_local * J_geo * rho)
+
+            accum_rho += (F - (f_theta / rho)) * wr
+
+        I_2D += accum_rho * wth
+
+    return I_1D + I_2D
 
 
 def integrate(
@@ -305,7 +526,6 @@ def integrate(
                 out += kernel(xc, y, normal, mu, nu) * (N_local * w * J_geo)
 
         case "near_sing":
-            # return np.zeros((3, 3))
             xi_star, eta_star = xi_eta_star
             xi_star = min(xi_star, 1.0 - 1e-12)
             u_star = float(np.clip(xi_star, 0.0, 1.0))
@@ -325,10 +545,23 @@ def integrate(
                     )
 
         case "sing":
-            # return np.zeros((3, 3))
-            if kernel == kelvin_H:
-                return np.zeros((3, 3))
             assert sing_corner in (0, 1, 2), "sing_corner must be 0,1,or 2"
+            if kernel == kelvin_H and loc_idx == sing_corner:
+                res = guiggiani_H_triangle(
+                    xc=xc,
+                    elem=elem,
+                    normal=normal,
+                    sing_corner=sing_corner,
+                    loc_idx=loc_idx,
+                    mu=mu,
+                    nu=nu,
+                    n_theta=10,
+                    n_rho=10,
+                )
+                # If CPV handled, return directly
+                if res is not None:
+                    return res
+
             for rho, wr in zip(t_1d, w_1d):
                 for tau, wt in zip(t_1d, w_1d):
                     xi, eta, J_duffy = duffy_map_corner(sing_corner, rho, tau)
@@ -337,8 +570,6 @@ def integrate(
                     J_geo = jacobian_determinant_3d(elem, xi, eta)
                     w_total = wr * wt * J_duffy * J_geo
                     out += kernel(xc, y, normal, mu, nu) * (N_vals[loc_idx] * w_total)
-
-        # TODO: case "hyper_sing":
 
     return out
 
@@ -383,11 +614,109 @@ for e, tri in enumerate(boundary_cells_conn):
     lc = np.linalg.norm(p1 - p3)
     elem_h[e] = (la + lb + lc) / 3.0
 
-NEAR_FACTOR = 0.30
+NEAR_FACTOR = 0.9
 near_thresh = NEAR_FACTOR * elem_h
 
 n_collocs = len(boundary_points)
 
+# ================== FREE-TERM (c = 0.5) NUMERICAL CHECK ==================
+
+
+def guiggiani_H_triangle_constN(
+    xc, elem, normal, sing_corner, mu, nu, n_theta=16, n_rho=16
+):
+    E = reorder_triangle_for_corner(elem, sing_corner)
+    a, b, J_geo, _ = triangle_edge_vectors(E)
+    n = normal / np.linalg.norm(normal)
+
+    I3 = np.eye(3)
+    one_m_2nu = 1.0 - 2.0 * nu
+    factor = -1.0 / (8.0 * np.pi * (1.0 - nu))  # matches your H convention
+
+    thetas, wtheta = gl_interval(n_theta, 0.0, 0.5 * np.pi)
+    C = np.zeros((3, 3))
+    tiny = 1e-14
+
+    for th, wth in zip(thetas, wtheta):
+        c, s = np.cos(th), np.sin(th)
+        denom = c + s
+        if denom < tiny:
+            continue
+
+        A_val, Av = A_theta(a, b, th)
+        if A_val < 1e-15:
+            continue
+
+        rhat = Av / A_val
+        n_dot_Av = float(np.dot(n, Av))
+        # leading angular tensor f_theta (same as in your Guiggiani code)
+        term_leading = n_dot_Av * (
+            one_m_2nu * I3 + 3.0 * np.outer(rhat, rhat)
+        ) - one_m_2nu * (np.outer(Av, n) - np.outer(n, Av))
+        f_theta = factor * (J_geo / (A_val**3)) * term_leading  # 3x3
+
+        rho_max = 1.0 / (denom)
+
+        # 1D analytic contribution (log term)
+        C += f_theta * np.log(max(tiny, rho_max * A_val)) * wth
+
+        # 2D regular remainder
+        rhos, wrho = gl_interval(n_rho, 0.0, rho_max)
+        accum_rho = np.zeros((3, 3))
+        for rho, wr in zip(rhos, wrho):
+            if rho < tiny:
+                continue
+            xi, eta = rho * c, rho * s
+            y = map_to_physical_3d(E, xi, eta)
+            Hmat = kelvin_H(xc, y, n, mu, nu)  # 3x3
+            # N ≡ 1 here, Jacobian ~ J_geo * rho in polar collapse
+            F = Hmat * (J_geo * rho)
+            accum_rho += (F - (f_theta / rho)) * wr
+
+        C += accum_rho * wth
+
+    return C
+
+
+def free_term_matrix_at_point(i):
+    xc = boundary_points[i]
+    C = np.zeros((3, 3))
+
+    for e, elem_conn in enumerate(boundary_cells_conn):
+        elem = elem_nodes[e]
+        normal = elem_normals[e]
+
+        if i in elem_conn:
+            sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1,2
+            C += guiggiani_H_triangle_constN(
+                xc, elem, normal, sing_corner, mu, nu, n_theta=20, n_rho=20
+            )
+        else:
+            # regular element: standard Dunavant quadrature
+            for (xi1, xi2), w in zip(quad_pts, quad_wts):
+                y = map_to_physical_3d(elem, xi1, xi2)
+                J_geo = jacobian_determinant_3d(elem, xi1, xi2)
+                C += kelvin_H(xc, y, normal, mu, nu) * (w * J_geo)
+
+    return -C
+
+
+test_indices = [0, len(boundary_points) // 3, 2 * len(boundary_points) // 3]
+vals = []
+print("\nChecking free-term c at selected collocation points:")
+for i in test_indices:
+    C = free_term_matrix_at_point(i)
+    c_i = np.trace(C) / 3.0
+    anis = np.linalg.norm(C - c_i * np.eye(3)) / np.linalg.norm(np.eye(3))
+    vals.append(c_i)
+    print(f"  i={i:6d}:  c_i ≈ {c_i:.6f}   isotropy error={anis:.2e}")
+
+mean_val = np.mean(vals)
+rel_error = np.abs((np.mean(vals) - 0.5) / 0.5)
+print(
+    f"\nMean c over {len(test_indices)} samples: {mean_val:.6f} (should be ~0.5) \n relative error = {rel_error*100:.2f} %"
+)
+#################################################################################################
 G = np.zeros((tdim * n_collocs, tdim * n_collocs))
 H = np.zeros((tdim * n_collocs, tdim * n_collocs))
 
@@ -438,7 +767,7 @@ print("Global Matrices G and H assembled")
 
 
 # -------------------- Apply uniform pressure over the sphere and solve --------------------
-p = 7.0e8  # uniform external pressure (Pa)
+p = 1.0e9  # uniform external pressure (Pa)
 
 N = n_collocs
 dofs = 3 * N
@@ -459,6 +788,7 @@ for e, tri in enumerate(boundary_cells_conn):
 nnorm = np.linalg.norm(node_norm, axis=1)
 nnorm[nnorm == 0.0] = 1.0
 node_norm /= nnorm[:, None]
+
 
 t_nodes = -p * node_norm  # np.full_like(boundary_points, np.array([1, 0, 0]))  #(N,3)
 t = t_nodes.reshape(-1)  # (3N,)
@@ -510,6 +840,13 @@ n_dir = np.divide(
 u_rad = np.einsum("ij,ij->i", u_nodes, n_dir)
 R = float(r.mean())
 u_th = -(1.0 - 2.0 * nu) / E * p * R
+
+u_th_vec = u_th * n_dir
+u_th_vec = u_th_vec.reshape(-1)
+lhs = H @ u_th_vec
+rel_err_th = np.linalg.norm(lhs - rhs) / np.linalg.norm(rhs)
+print(f"Relative error | (Hu_th - Gt)/ Gt | = {rel_err_th} (~{100*rel_err_th:.2f}%)")
+
 print(f"Analytic u_r(R) = {u_th:.6e} m  (R ≈ {R:.6e} m)")
 print(f"Numerical mean(u_r) = {u_rad.mean():.6e} m")
 err_L2 = np.sqrt(np.mean((u_rad - u_th) ** 2))
@@ -533,5 +870,5 @@ print("sign(mean(g_n))      =", np.sign(np.mean(g_n)))  # should be negative (in
 boundary_mesh.point_data["u"] = u_nodes
 boundary_mesh.point_data["normal"] = node_norm
 boundary_mesh.point_data["Gt"] = rhs
-meshio.write("sphere_boundary_displacement_wsing.vtk", boundary_mesh)
+meshio.write("sphere_disp_coarse.vtk", boundary_mesh)
 print("Output file written")

@@ -2,7 +2,7 @@ SetFactory("OpenCASCADE");
 
 // ---------------- Parameters ----------------
 R  = 1.0;          // radius
-lc = 0.10;         // target mesh size on the surface 0.15
+lc = 0.05;         // target mesh size on the surface 0.15, 0.10
 xc = 0; yc = 0; zc = 0; // center
 
 // Create a solid sphere (a volume); we'll mesh only its boundary (surface)

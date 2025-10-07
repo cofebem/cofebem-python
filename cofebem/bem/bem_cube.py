@@ -1,0 +1,925 @@
+import meshio
+import numpy as np
+from tqdm import tqdm
+from numba import njit
+
+
+# ------------------------------------------------read mesh and extract boundary ------------------------------------
+def mesh_dim(mesh):
+    dim_map = {
+        "vertex": 0,
+        "line": 1,
+        "line2": 1,
+        "triangle": 2,
+        "triangle6": 2,
+        "quad": 2,
+        "quad8": 2,
+        "tetra": 3,
+        "tetra10": 3,
+        "hexahedron": 3,
+        "hexahedron20": 3,
+        "wedge": 3,
+        "pyramid": 3,
+    }
+    dims = [dim_map[cell.type] for cell in mesh.cells]
+    return max(dims)
+
+
+mesh = meshio.read("cube_tetra_meshio.msh")
+
+cell_type = (
+    "triangle"
+    if "triangle" in mesh.cells_dict
+    else ("quad" if "quad" in mesh.cells_dict else None)
+)
+if cell_type is None:
+    raise RuntimeError("No surface triangle/quad cells found in the mesh.")
+
+F = mesh.cells_dict[cell_type]
+
+unique_ids, inv = np.unique(F.ravel(), return_inverse=True)
+
+boundary_points = mesh.points[unique_ids]
+boundary_cells_conn = inv.reshape(F.shape)
+
+boundary_mesh = meshio.Mesh(
+    points=boundary_points,
+    cells=[(cell_type, boundary_cells_conn)],
+)
+meshio.write("cube_boundary.vtk", boundary_mesh)
+
+# ------------------------------------material parameters---------------------------------------------
+
+E = 1.0e9
+nu = 0.3
+
+lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
+mu = E / (2 * (1 + nu))
+
+# -----------------------------------------Kelvin fundamental solutions-------------------------------------
+
+
+def kelvin_G(x, y, normal, mu, nu):
+    x = np.asarray(x)
+    y = np.asarray(y)
+    r = y - x
+    r_norm = np.linalg.norm(r)
+
+    if r_norm < 1e-12:
+        raise ValueError("Singularity encountered: x and y coincide (r = 0).")
+
+    I = np.eye(3)
+
+    factor = 1.0 / (16 * np.pi * mu * (1 - nu) * r_norm)
+
+    G = factor * ((3 - 4 * nu) * I + np.outer(r, r) / r_norm**2)
+
+    return G
+
+
+def kelvin_H(x, y, normal, mu, nu):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    normal = np.asarray(normal, dtype=float)
+
+    r = y - x
+    r_norm = np.linalg.norm(r)
+
+    if r_norm < 1e-12:
+        raise ValueError("Singularity encountered: x and y coincide (r = 0).")
+
+    I = np.eye(3)
+
+    factor = -1 / (8 * np.pi * (1 - nu) * r_norm**2)
+    term1 = (
+        np.dot(r, normal) * ((1 - 2 * nu) * I + 3 * np.outer(r, r) / r_norm**2) / r_norm
+    )
+    term2 = (1 - 2 * nu) * (np.outer(r, normal) - np.outer(normal, r)) / r_norm
+
+    # factor = 1 / (8 * np.pi * (1 - nu) * r_norm**3)
+    # term1 = np.dot(r, normal) * ((1 - 2 * nu) * I + 3 * np.outer(r, r) / r_norm**2)
+    # term2 = (1 - 2 * nu) * (np.outer(r, normal) - np.outer(normal, r))
+
+    H = factor * (term1 - term2)
+
+    return H
+
+
+# ----------------------------------- Shape functions for triangular elements----------------------------------
+def shape_functions(xi1, xi2):
+    N1 = 1 - xi1 - xi2
+    N2 = xi1
+    N3 = xi2
+    return np.array([N1, N2, N3])
+
+
+def shape_function_derivatives(xi1, xi2):
+    dN1_dxi1 = -1
+    dN1_dxi2 = -1
+    dN2_dxi1 = 1
+    dN2_dxi2 = 0
+    dN3_dxi1 = 0
+    dN3_dxi2 = 1
+    return np.array(
+        [
+            [dN1_dxi1, dN1_dxi2],
+            [dN2_dxi1, dN2_dxi2],
+            [dN3_dxi1, dN3_dxi2],
+        ]
+    )
+
+
+def map_to_physical_3d(element, xi1, xi2):
+    N_vals = shape_functions(xi1, xi2)
+    point = np.dot(N_vals, element)
+    return point
+
+
+def jacobian_determinant_3d(element, xi1, xi2):
+    dN = np.array([[-1.0, -1.0], [1.0, 0.0], [0.0, 1.0]], dtype=float)  # shape (3,2)
+
+    J = element.T @ dN
+    return np.linalg.norm(np.cross(J[:, 0], J[:, 1]))
+
+
+# -----------------------------Numerical integration-----------------------------------
+def dunavant_rule(degree: int):
+    if degree <= 1:
+        pts = np.array([[1 / 3, 1 / 3]], dtype=float)
+        w = np.array([0.5], dtype=float)
+
+    elif degree == 2:
+        a = 1.0 / 6.0
+        b = 2.0 / 3.0
+        pts = np.array([[a, a], [b, a], [a, b]], dtype=float)
+        w = np.array([1 / 6, 1 / 6, 1 / 6], dtype=float)
+
+    elif degree == 3:
+        pts = np.array(
+            [[1 / 3, 1 / 3], [0.6, 0.2], [0.2, 0.6], [0.2, 0.2]], dtype=float
+        )
+        w = np.array([-27 / 96, 25 / 96, 25 / 96, 25 / 96], dtype=float)
+
+    elif degree == 4:
+        a = 0.445948490915965
+        b = 0.091576213509771
+        w1 = 0.111690794839005
+        w2 = 0.054975871827661
+        pts = np.array(
+            [
+                [a, a],
+                [1 - 2 * a, a],
+                [a, 1 - 2 * a],
+                [b, b],
+                [1 - 2 * b, b],
+                [b, 1 - 2 * b],
+            ],
+            dtype=float,
+        )
+        w = np.array([w1, w1, w1, w2, w2, w2], dtype=float)
+
+    elif degree == 5:
+        a = 0.101286507323456
+        b = 0.470142064105115
+        w1 = 0.0629695902724136
+        w2 = 0.066197076394253
+        pts = np.array(
+            [
+                [a, a],
+                [1 - 2 * a, a],
+                [a, 1 - 2 * a],
+                [b, b],
+                [1 - 2 * b, b],
+                [b, 1 - 2 * b],
+                [1 / 3, 1 / 3],
+            ],
+            dtype=float,
+        )
+        w = np.array([w1, w1, w1, w2, w2, w2, 0.1125], dtype=float)
+
+    elif degree == 13:
+        pts = np.array(
+            [
+                [0.333333333333333333333333333333, 0.333333333333333333333333333333],
+                [0.950275662924105565450352089520, 0.024862168537947217274823955239],
+                [0.024862168537947217274823955239, 0.950275662924105565450352089520],
+                [0.024862168537947217274823955239, 0.024862168537947217274823955239],
+                [0.171614914923835347556304795551, 0.414192542538082326221847602214],
+                [0.414192542538082326221847602214, 0.171614914923835347556304795551],
+                [0.414192542538082326221847602214, 0.414192542538082326221847602214],
+                [0.539412243677190440263092985511, 0.230293878161404779868453507244],
+                [0.230293878161404779868453507244, 0.539412243677190440263092985511],
+                [0.230293878161404779868453507244, 0.230293878161404779868453507244],
+                [0.772160036676532561750285570113, 0.113919981661733719124857214943],
+                [0.113919981661733719124857214943, 0.772160036676532561750285570113],
+                [0.113919981661733719124857214943, 0.113919981661733719124857214943],
+                [0.009085399949835353883572964740, 0.495457300025082323058213517632],
+                [0.495457300025082323058213517632, 0.009085399949835353883572964740],
+                [0.495457300025082323058213517632, 0.495457300025082323058213517632],
+                [0.062277290305886993497083640527, 0.468861354847056503251458179727],
+                [0.468861354847056503251458179727, 0.062277290305886993497083640527],
+                [0.468861354847056503251458179727, 0.468861354847056503251458179727],
+                [0.022076289653624405142446876931, 0.851306504174348550389457672223],
+                [0.022076289653624405142446876931, 0.126617206172027096933163647918],
+                [0.851306504174348550389457672223, 0.022076289653624405142446876931],
+                [0.126617206172027096933163647918, 0.851306504174348550389457672223],
+                [0.851306504174348550389457672223, 0.126617206172027096933163647918],
+                [0.126617206172027096933163647918, 0.022076289653624405142446876931],
+                [0.018620522802520968955913511549, 0.689441970728591295496647976487],
+                [0.018620522802520968955913511549, 0.291937506468887771754472382212],
+                [0.689441970728591295496647976487, 0.018620522802520968955913511549],
+                [0.291937506468887771754472382212, 0.689441970728591295496647976487],
+                [0.689441970728591295496647976487, 0.291937506468887771754472382212],
+                [0.291937506468887771754472382212, 0.018620522802520968955913511549],
+                [0.096506481292159228736516560903, 0.635867859433872768286976979827],
+                [0.096506481292159228736516560903, 0.267625659273967961282458816185],
+                [0.635867859433872768286976979827, 0.096506481292159228736516560903],
+                [0.267625659273967961282458816185, 0.635867859433872768286976979827],
+                [0.635867859433872768286976979827, 0.267625659273967961282458816185],
+                [0.267625659273967961282458816185, 0.096506481292159228736516560903],
+            ]
+        )
+
+        w_raw = np.array(
+            [
+                0.051739766065744133555179145422,
+                0.008007799555564801597804123460,
+                0.008007799555564801597804123460,
+                0.008007799555564801597804123460,
+                0.046868898981821644823226732071,
+                0.046868898981821644823226732071,
+                0.046868898981821644823226732071,
+                0.046590940183976487960361770070,
+                0.046590940183976487960361770070,
+                0.046590940183976487960361770070,
+                0.031016943313796381407646220131,
+                0.031016943313796381407646220131,
+                0.031016943313796381407646220131,
+                0.010791612736631273623178240136,
+                0.010791612736631273623178240136,
+                0.010791612736631273623178240136,
+                0.032195534242431618819414482205,
+                0.032195534242431618819414482205,
+                0.032195534242431618819414482205,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+            ]
+        )
+        w = 0.5 * w_raw
+
+    else:
+        return dunavant_rule(5)
+
+    return pts, w
+
+
+def telles01(s0, t):  # t in [0,1]
+    z = 2 * t - 1
+    a = 2 * s0 - 1
+    s = 0.5 * (z**3 - a * z**2 + a + 1.0)
+    ds_dz = 0.5 * (3 * z**2 - 2 * a * z)
+    ds_dt = 2 * ds_dz
+    return s, ds_dt
+
+
+def closest_point_on_triangle(p, a, b, c):
+    ab = b - a
+    ac = c - a
+    ap = p - a
+    d1 = np.dot(ab, ap)
+    d2 = np.dot(ac, ap)
+    if d1 <= 0.0 and d2 <= 0.0:
+        return a, (1.0, 0.0, 0.0), np.linalg.norm(p - a)
+
+    bp = p - b
+    d3 = np.dot(ab, bp)
+    d4 = np.dot(ac, bp)
+    if d3 >= 0.0 and d4 <= d3:
+        return b, (0.0, 1.0, 0.0), np.linalg.norm(p - b)
+
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
+        v = d1 / (d1 - d3)
+        q = a + v * ab
+        return q, (1.0 - v, v, 0.0), np.linalg.norm(p - q)
+
+    cp = p - c
+    d5 = np.dot(ab, cp)
+    d6 = np.dot(ac, cp)
+    if d6 >= 0.0 and d5 <= d6:
+        return c, (0.0, 0.0, 1.0), np.linalg.norm(p - c)
+
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
+        w = d2 / (d2 - d6)
+        q = a + w * ac
+        return q, (1.0 - w, 0.0, w), np.linalg.norm(p - q)
+
+    va = d3 * d6 - d5 * d4
+    if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        q = b + w * (c - b)
+        return q, (0.0, 1.0 - w, w), np.linalg.norm(p - q)
+
+    # Inside face region
+    denom = 1.0 / (va + vb + vc)
+    v = vb * denom
+    w = vc * denom
+    u = 1.0 - v - w
+    q = u * a + v * b + w * c
+    return q, (u, v, w), np.linalg.norm(p - q)
+
+
+def duffy_map_corner(corner, u, v):
+
+    if corner == 0:
+        xi1 = u * (1 - v)
+        xi2 = u * v
+        J = u
+    elif corner == 1:
+        xi1 = 1.0 - u
+        xi2 = u * v
+        J = u
+    else:  # corner == 2
+        xi1 = u * v
+        xi2 = 1.0 - u
+        J = u
+    return xi1, xi2, J
+
+
+gauss_pts, gauss_wts = np.polynomial.legendre.leggauss(3)
+
+degree = 5
+quad_pts, quad_wts = dunavant_rule(degree)
+
+
+def legendre_on_01(n):
+    x, w = np.polynomial.legendre.leggauss(n)
+    return 0.5 * (x + 1.0), 0.5 * w
+
+
+GL_N = 10
+t_1d, w_1d = legendre_on_01(GL_N)
+
+
+# ----------------------------- Strong Sing quadrature -----------------------------
+def gl_interval(n, a, b):
+    """Gauss–Legendre nodes/weights on [a,b]."""
+    x, w = np.polynomial.legendre.leggauss(n)
+    # map from [-1,1] to [a,b]
+    xm = 0.5 * (b - a) * x + 0.5 * (a + b)
+    wm = 0.5 * (b - a) * w
+    return xm, wm
+
+
+def reorder_triangle_for_corner(elem, sing_corner):
+
+    if sing_corner == 0:
+        return elem.copy()
+    elif sing_corner == 1:
+        # (1,2,0)
+        return np.vstack([elem[1], elem[2], elem[0]])
+    else:  # sing_corner == 2
+        # (2,0,1)
+        return np.vstack([elem[2], elem[0], elem[1]])
+
+
+def triangle_edge_vectors(elem_loc0):
+
+    p0, p1, p2 = elem_loc0
+    a = p1 - p0
+    b = p2 - p0
+    cx = np.cross(a, b)
+    J_geo = np.linalg.norm(cx)
+    if J_geo == 0.0:
+        raise ValueError("Degenerate triangle in CPV routine (zero area).")
+    n_tri = cx / J_geo
+    return a, b, J_geo, n_tri
+
+
+def A_theta(a, b, theta):
+
+    c, s = np.cos(theta), np.sin(theta)
+    Av = a * c + b * s  # 3-vector
+    return np.linalg.norm(Av), Av
+
+
+# ----------------------------- Guiggiani CPV for H on a single P1 triangle -----------------------------
+def guiggiani_H_triangle(
+    xc,
+    elem,
+    normal,
+    sing_corner,
+    loc_idx,
+    mu,
+    nu,
+    n_theta=16,
+    n_rho=16,
+):
+    """
+    Direct CPV evaluation of the traction kernel H for a single P1 triangle
+    when the collocation is at a triangle vertex (Guiggiani & Gigante, 1990, Eq. (20e)).
+
+    Returns: 3x3 matrix, or None if this is not the singular basis.
+    """
+
+    if loc_idx != sing_corner:
+        return None
+
+    E = reorder_triangle_for_corner(elem, sing_corner)
+    p0, p1, p2 = E[0], E[1], E[2]
+
+    a, b, J_geo, _ = triangle_edge_vectors(E)
+
+    n = normal / np.linalg.norm(normal)
+
+    factor = -1.0 / (8.0 * np.pi * (1.0 - nu))
+    I3 = np.eye(3)
+    one_minus_2nu = 1.0 - 2.0 * nu
+
+    thetas, wtheta = gl_interval(n_theta, 0.0, 0.5 * np.pi)
+
+    I_1D = np.zeros((3, 3))
+    I_2D = np.zeros((3, 3))
+
+    tiny = 1e-14
+
+    for th, wth in zip(thetas, wtheta):
+        c, s = np.cos(th), np.sin(th)
+        denom = c + s
+        if denom < tiny:
+            continue  # avoid blowup right at the axes
+
+        A_val, Av = A_theta(a, b, th)
+        if A_val < 1e-15:
+            continue  # degenerate direction
+
+        rhat = Av / A_val
+        n_dot_Av = float(np.dot(n, Av))
+
+        outer_rhat = np.outer(rhat, rhat)
+        term_leading = n_dot_Av * (
+            one_minus_2nu * I3 + 3.0 * outer_rhat
+        ) - one_minus_2nu * (np.outer(Av, n) - np.outer(n, Av))
+        f_theta = factor * (J_geo / (A_val**3)) * term_leading  # 3x3
+
+        rho_max = 1.0 / denom
+
+        I_1D += f_theta * np.log(max(tiny, rho_max * A_val)) * wth
+
+        rhos, wrho = gl_interval(n_rho, 0.0, rho_max)
+        accum_rho = np.zeros((3, 3))
+        for rho, wr in zip(rhos, wrho):
+            if rho < tiny:
+                continue
+
+            xi = rho * c
+            eta = rho * s
+
+            y = map_to_physical_3d(E, xi, eta)
+
+            N_local = 1.0 - xi - eta
+            if N_local < 0.0:
+                N_local = 0.0
+
+            Hmat = kelvin_H(xc, y, n, mu, nu)  # 3x3
+
+            F = Hmat * (N_local * J_geo * rho)
+
+            accum_rho += (F - (f_theta / rho)) * wr
+
+        I_2D += accum_rho * wth
+
+    return I_1D + I_2D
+
+
+def integrate(
+    kernel, xc, elem, normal, loc_idx, reg, xi_eta_star=None, sing_corner=None
+):
+    out = np.zeros((3, 3))
+    match reg:
+        case "reg":
+            # Dunavant rule
+            for (xi1, xi2), w in zip(quad_pts, quad_wts):
+                N_vals = shape_functions(xi1, xi2)
+                N_local = N_vals[loc_idx]
+                y = map_to_physical_3d(elem, xi1, xi2)
+                J_geo = jacobian_determinant_3d(elem, xi1, xi2)
+                out += kernel(xc, y, normal, mu, nu) * (N_local * w * J_geo)
+
+        case "near_sing":
+            xi_star, eta_star = xi_eta_star
+            xi_star = min(xi_star, 1.0 - 1e-12)
+            u_star = float(np.clip(xi_star, 0.0, 1.0))
+            v_star = float(np.clip(eta_star / max(1e-12, (1.0 - xi_star)), 0.0, 1.0))
+
+            for t, wt in zip(t_1d, w_1d):  # [0,1]
+                u, du_dt = telles01(u_star, t)
+                for s, ws in zip(t_1d, w_1d):  # [0,1]
+                    v, dv_ds = telles01(v_star, s)
+                    xi, eta = u, (1.0 - u) * v
+                    J_geo = jacobian_determinant_3d(elem, xi, eta)  # P1: constant
+                    J_map = (1.0 - u) * du_dt * dv_ds  # collapse * Telles_u * Telles_v
+                    N_local = shape_functions(xi, eta)[loc_idx]
+                    y = map_to_physical_3d(elem, xi, eta)
+                    out += kernel(xc, y, normal, mu, nu) * (
+                        N_local * wt * ws * J_map * J_geo
+                    )
+
+        case "sing":
+            assert sing_corner in (0, 1, 2), "sing_corner must be 0,1,or 2"
+            if kernel == kelvin_H and loc_idx == sing_corner:
+                res = guiggiani_H_triangle(
+                    xc=xc,
+                    elem=elem,
+                    normal=normal,
+                    sing_corner=sing_corner,
+                    loc_idx=loc_idx,
+                    mu=mu,
+                    nu=nu,
+                    n_theta=10,
+                    n_rho=10,
+                )
+                # If CPV handled, return directly
+                if res is not None:
+                    return res
+
+            for rho, wr in zip(t_1d, w_1d):
+                for tau, wt in zip(t_1d, w_1d):
+                    xi, eta, J_duffy = duffy_map_corner(sing_corner, rho, tau)
+                    N_vals = shape_functions(xi, eta)
+                    y = map_to_physical_3d(elem, xi, eta)
+                    J_geo = jacobian_determinant_3d(elem, xi, eta)
+                    w_total = wr * wt * J_duffy * J_geo
+                    out += kernel(xc, y, normal, mu, nu) * (N_vals[loc_idx] * w_total)
+
+    return out
+
+
+# # -----------------------------------Collocation BEM---------------------------------------------------------
+# # -----------------------------------Assembling H and G------------------------------------------------------
+tdim = 3
+fdim = 2
+
+
+def tri_normal(p1, p2, p3):
+    a = np.cross(p2 - p1, p3 - p1)
+    nrm = np.linalg.norm(a)
+    if nrm == 0.0:
+        raise ValueError("Degenerate triangle (zero area).")
+    return a / nrm
+
+
+mesh_center = boundary_points.mean(axis=0)
+nElem = boundary_cells_conn.shape[0]
+
+elem_nodes = np.empty((nElem, 3, 3), dtype=np.float64)
+elem_normals = np.empty((nElem, 3), dtype=np.float64)
+elem_h = np.empty(nElem, dtype=np.float64)
+
+for e, tri in enumerate(boundary_cells_conn):
+    p1, p2, p3 = (
+        boundary_points[tri[0]],
+        boundary_points[tri[1]],
+        boundary_points[tri[2]],
+    )
+    elem_nodes[e, :, :] = np.vstack([p1, p2, p3])
+    n = tri_normal(p1, p2, p3)
+    c = (p1 + p2 + p3) / 3.0
+    if np.dot(n, c - mesh_center) < 0:
+        print("Problema")
+        n = -n
+    elem_normals[e, :] = n
+
+    la = np.linalg.norm(p2 - p1)
+    lb = np.linalg.norm(p3 - p2)
+    lc = np.linalg.norm(p1 - p3)
+    elem_h[e] = (la + lb + lc) / 3.0
+
+NEAR_FACTOR = 0.0030
+near_thresh = NEAR_FACTOR * elem_h
+
+n_collocs = len(boundary_points)
+
+
+# ---------- Free-term c_i = omega_i/(4π) for each boundary node ----------
+corners = []
+edges = []
+regs = []
+
+
+def count_on_planes(p, tol=1e-9):
+    hits = 0
+    for k in range(3):
+        if abs(p[k] - 0.0) <= tol or abs(p[k] - 1.0) <= tol:
+            hits += 1
+    return hits
+
+
+c_vals = np.empty(n_collocs, dtype=float)
+tol_plane = 1e-9
+for i, x in enumerate(boundary_points):
+    hits = count_on_planes(x, tol_plane)
+    if hits == 1:  # face interior
+        c_vals[i] = 0.5
+        regs.append(i)
+    elif hits == 2:  # edge
+        c_vals[i] = 0.25
+        edges.append(i)
+    elif hits == 3:  # corner
+        c_vals[i] = 0.125
+        corners.append(i)
+    else:
+        c_vals[i] = 0.5
+
+print(
+    "c counts:",
+    "faces",
+    int(np.sum(np.isclose(c_vals, 0.5))),
+    len(regs),
+    "edges",
+    int(np.sum(np.isclose(c_vals, 0.25))),
+    len(edges),
+    "corners",
+    int(np.sum(np.isclose(c_vals, 0.125))),
+    len(corners),
+)
+
+
+print("c range:", c_vals.min(), c_vals.max())
+
+
+# ================== FREE-TERM NUMERICAL CHECK ==================
+
+
+def guiggiani_H_triangle_constN(
+    xc, elem, normal, sing_corner, mu, nu, n_theta=16, n_rho=16
+):
+    E = reorder_triangle_for_corner(elem, sing_corner)
+    a, b, J_geo, _ = triangle_edge_vectors(E)
+    n = normal / np.linalg.norm(normal)
+
+    I3 = np.eye(3)
+    one_m_2nu = 1.0 - 2.0 * nu
+    factor = -1.0 / (8.0 * np.pi * (1.0 - nu))
+
+    thetas, wtheta = gl_interval(n_theta, 0.0, 0.5 * np.pi)
+    C = np.zeros((3, 3))
+    tiny = 1e-14
+
+    for th, wth in zip(thetas, wtheta):
+        c, s = np.cos(th), np.sin(th)
+        denom = c + s
+        if denom < tiny:
+            continue
+
+        A_val, Av = A_theta(a, b, th)
+        if A_val < 1e-15:
+            continue
+
+        rhat = Av / A_val
+        n_dot_Av = float(np.dot(n, Av))
+        # leading angular tensor f_theta
+        term_leading = n_dot_Av * (
+            one_m_2nu * I3 + 3.0 * np.outer(rhat, rhat)
+        ) - one_m_2nu * (np.outer(Av, n) - np.outer(n, Av))
+        f_theta = factor * (J_geo / (A_val**3)) * term_leading  # 3x3
+
+        rho_max = 1.0 / (denom)
+
+        # 1D analytic contribution (log term)
+        C += f_theta * np.log(max(tiny, rho_max * A_val)) * wth
+
+        # 2D regular remainder
+        rhos, wrho = gl_interval(n_rho, 0.0, rho_max)
+        accum_rho = np.zeros((3, 3))
+        for rho, wr in zip(rhos, wrho):
+            if rho < tiny:
+                continue
+            xi, eta = rho * c, rho * s
+            y = map_to_physical_3d(E, xi, eta)
+            Hmat = kelvin_H(xc, y, n, mu, nu)  # 3x3
+            # N ≡ 1 here, Jacobian ~ J_geo * rho in polar collapse
+            F = Hmat * (J_geo * rho)
+            accum_rho += (F - (f_theta / rho)) * wr
+
+        C += accum_rho * wth
+
+    return C
+
+
+def free_term_matrix_at_point(i):
+    xc = boundary_points[i]
+    C = np.zeros((3, 3))
+
+    for e, elem_conn in enumerate(boundary_cells_conn):
+        elem = elem_nodes[e]
+        normal = elem_normals[e]
+
+        if i in elem_conn:
+            sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1,2
+            C += guiggiani_H_triangle_constN(
+                xc, elem, normal, sing_corner, mu, nu, n_theta=20, n_rho=20
+            )
+        else:
+            # regular element: standard Dunavant quadrature
+            for (xi1, xi2), w in zip(quad_pts, quad_wts):
+                y = map_to_physical_3d(elem, xi1, xi2)
+                J_geo = jacobian_determinant_3d(elem, xi1, xi2)
+                C += kelvin_H(xc, y, normal, mu, nu) * (w * J_geo)
+
+    return -C
+
+
+test_indices = [regs[0], edges[0], corners[0]]
+test_labels = ["face", "edge", "corner"]
+vals = []
+j = 0
+print("\nChecking free-term c at selected collocation points:")
+for i in test_indices:
+    C = free_term_matrix_at_point(i)
+    c_i = np.trace(C) / 3.0
+    anis = np.linalg.norm(C - c_i * np.eye(3)) / np.linalg.norm(np.eye(3))
+    vals.append(c_i)
+    print(f"  i={i:6d}: {test_labels[j]}  c_i ≈ {c_i:.6f}   isotropy error={anis:.2e}")
+    j += 1
+
+
+#################################################################################################
+
+
+# G = np.zeros((tdim * n_collocs, tdim * n_collocs))
+# H = np.zeros((tdim * n_collocs, tdim * n_collocs))
+
+# for i, xc in tqdm(
+#     enumerate(boundary_points),
+#     total=n_collocs,
+#     desc="Assembling global matrices",
+# ):
+
+#     for e, elem_conn in enumerate(boundary_cells_conn):
+#         elem = elem_nodes[e]
+#         normal = elem_normals[e]
+
+#         q, (lam1, lam2, lam3), dist = closest_point_on_triangle(
+#             xc, elem[0], elem[1], elem[2]
+#         )
+#         xi_star, eta_star = lam2, lam3
+
+#         on_element = i in elem_conn
+#         near_sing = (not on_element) and (dist < near_thresh[e])
+
+#         if on_element:
+#             sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1, or 2
+#         else:
+#             sing_corner = None
+
+#         for loc_idx, j in enumerate(elem_conn):
+#             if on_element:
+#                 reg_flag, xi_eta_star = "sing", None
+#             elif near_sing:
+#                 reg_flag, xi_eta_star = "near_sing", (xi_star, eta_star)
+#             else:
+#                 reg_flag, xi_eta_star = "reg", None
+
+#             Gij = integrate(
+#                 kelvin_G, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
+#             )
+#             Hij = integrate(
+#                 kelvin_H, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
+#             )
+
+#             G[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Gij
+#             H[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Hij
+
+#     H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(
+#         tdim
+#     )  # 0.5 * np.eye(tdim)
+
+
+# # print("Global Matrices G and H assembled")
+
+# np.savez(
+#     "GH_cube.npz",
+#     G=G,
+#     H=H,
+# )
+
+# -------------------- Mixed BCs: Dirichlet on z=0, Neumann on a patch at (0.5,0.5,1) --------------------
+
+data = np.load("GH_cube.npz")
+
+G, H = data["G"], data["H"]
+
+
+def nodes2dofs(nodes):
+    dofs = np.zeros(tdim * len(nodes), dtype=np.int64)
+    for i, node in enumerate(nodes):
+        dofs[tdim * i : tdim * (i + 1)] = tdim * node + np.arange(3)
+
+    return dofs
+
+
+N = n_collocs
+dofs = 3 * N
+pts = boundary_points
+
+tol = 1.0e-8
+
+Iu = np.where(np.abs(pts[:, 2] - 0.0) <= tol)[0]
+It = np.setdiff1d(np.arange(N), Iu)
+
+Iu_ = nodes2dofs(Iu)
+It_ = nodes2dofs(It)
+
+u_u = np.zeros(len(Iu_))
+t_t = np.zeros(len(It_))
+
+R = 0.15
+Xc = Yc = 0.5
+
+mask = (((pts[:, 0] - Xc) ** 2 + (pts[:, 1] - Yc) ** 2) <= R**2) & np.isclose(
+    pts[:, 2], 1, atol=tol
+)
+If = np.where(mask)[0]
+
+value = np.array([0.0, 0.0, -1.0e9], dtype=float)
+
+for k, node in enumerate(It):
+    if node in If:
+        t_t[tdim * k : tdim * (k + 1)] = value
+
+
+H_uu = H[np.ix_(Iu_, Iu_)]
+H_ut = H[np.ix_(Iu_, It_)]
+H_tu = H[np.ix_(It_, Iu_)]
+H_tt = H[np.ix_(It_, It_)]
+
+
+G_uu = G[np.ix_(Iu_, Iu_)]
+G_ut = G[np.ix_(Iu_, It_)]
+G_tu = G[np.ix_(It_, Iu_)]
+G_tt = G[np.ix_(It_, It_)]
+
+A = np.block(
+    [
+        [H_ut, -G_uu],
+        [H_tt, -G_tu],
+    ]
+)
+
+
+b = np.concatenate([-H_uu @ u_u + G_ut @ t_t, -H_tu @ u_u + G_tt @ t_t])
+
+x = np.linalg.solve(A, b)
+
+u_t = x[: len(It_)]
+t_u = x[len(It_) :]
+
+u_nodes = np.zeros(tdim * N, dtype=float)
+t_nodes = np.zeros(tdim * N, dtype=float)
+
+u_nodes[Iu_] = u_u
+u_nodes[It_] = u_t
+
+t_nodes[It_] = t_t
+t_nodes[Iu_] = t_u
+
+U = u_nodes.reshape((N, tdim))
+T = t_nodes.reshape((N, tdim))
+
+# -------------------- Write boundary VTK with results and BC tags --------------------
+bc_flag = np.zeros(N, dtype=np.int32)  # 0: free, 1: Dirichlet, 2: Neumann-patch
+bc_flag[Iu] = 1
+bc_flag[np.setdiff1d(It, If)] = 2
+bc_flag[If] = 3
+
+
+np.savez(
+    "u_cube.npz",
+    u=U,
+    t=T,
+    bc_flag=bc_flag,
+)
+boundary_mesh.point_data["u"] = U
+boundary_mesh.point_data["t"] = T
+boundary_mesh.point_data["bc_flag"] = bc_flag
+
+meshio.write("cube_boundary_mixedBC.vtu", boundary_mesh)
+print("Wrote cube_boundary_mixedBC.vtu")
