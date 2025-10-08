@@ -25,7 +25,7 @@ def mesh_dim(mesh):
     return max(dims)
 
 
-mesh = meshio.read("fine2_sphere.msh")
+mesh = meshio.read("coarse_sphere.msh")
 
 cell_type = (
     "triangle"
@@ -701,21 +701,21 @@ def free_term_matrix_at_point(i):
     return -C
 
 
-test_indices = [0, len(boundary_points) // 3, 2 * len(boundary_points) // 3]
-vals = []
-print("\nChecking free-term c at selected collocation points:")
-for i in test_indices:
-    C = free_term_matrix_at_point(i)
-    c_i = np.trace(C) / 3.0
-    anis = np.linalg.norm(C - c_i * np.eye(3)) / np.linalg.norm(np.eye(3))
-    vals.append(c_i)
-    print(f"  i={i:6d}:  c_i ≈ {c_i:.6f}   isotropy error={anis:.2e}")
+# test_indices = [0, len(boundary_points) // 3, 2 * len(boundary_points) // 3]
+# vals = []
+# print("\nChecking free-term c at selected collocation points:")
+# for i in test_indices:
+#     C = free_term_matrix_at_point(i)
+#     c_i = np.trace(C) / 3.0
+#     anis = np.linalg.norm(C - c_i * np.eye(3)) / np.linalg.norm(np.eye(3))
+#     vals.append(c_i)
+#     print(f"  i={i:6d}:  c_i ≈ {c_i:.6f}   isotropy error={anis:.2e}")
 
-mean_val = np.mean(vals)
-rel_error = np.abs((np.mean(vals) - 0.5) / 0.5)
-print(
-    f"\nMean c over {len(test_indices)} samples: {mean_val:.6f} (should be ~0.5) \n relative error = {rel_error*100:.2f} %"
-)
+# mean_val = np.mean(vals)
+# rel_error = np.abs((np.mean(vals) - 0.5) / 0.5)
+# print(
+#     f"\nMean c over {len(test_indices)} samples: {mean_val:.6f} (should be ~0.5) \n relative error = {rel_error*100:.2f} %"
+# )
 #################################################################################################
 G = np.zeros((tdim * n_collocs, tdim * n_collocs))
 H = np.zeros((tdim * n_collocs, tdim * n_collocs))
@@ -765,8 +765,18 @@ for i, xc in tqdm(
 
 print("Global Matrices G and H assembled")
 
+np.savez(
+    "GH_sphere.npz",
+    G=G,
+    H=H,
+)
 
 # -------------------- Apply uniform pressure over the sphere and solve --------------------
+
+# data = np.load("GH_cube.npz")
+
+# G, H = data["G"], data["H"]
+
 p = 1.0e9  # uniform external pressure (Pa)
 
 N = n_collocs

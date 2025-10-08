@@ -648,21 +648,21 @@ for i, x in enumerate(boundary_points):
     else:
         c_vals[i] = 0.5
 
-print(
-    "c counts:",
-    "faces",
-    int(np.sum(np.isclose(c_vals, 0.5))),
-    len(regs),
-    "edges",
-    int(np.sum(np.isclose(c_vals, 0.25))),
-    len(edges),
-    "corners",
-    int(np.sum(np.isclose(c_vals, 0.125))),
-    len(corners),
-)
+# print(
+#     "c counts:",
+#     "faces",
+#     int(np.sum(np.isclose(c_vals, 0.5))),
+#     len(regs),
+#     "edges",
+#     int(np.sum(np.isclose(c_vals, 0.25))),
+#     len(edges),
+#     "corners",
+#     int(np.sum(np.isclose(c_vals, 0.125))),
+#     len(corners),
+# )
 
 
-print("c range:", c_vals.min(), c_vals.max())
+# print("c range:", c_vals.min(), c_vals.max())
 
 
 # ================== FREE-TERM NUMERICAL CHECK ==================
@@ -751,14 +751,14 @@ test_indices = [regs[0], edges[0], corners[0]]
 test_labels = ["face", "edge", "corner"]
 vals = []
 j = 0
-print("\nChecking free-term c at selected collocation points:")
-for i in test_indices:
-    C = free_term_matrix_at_point(i)
-    c_i = np.trace(C) / 3.0
-    anis = np.linalg.norm(C - c_i * np.eye(3)) / np.linalg.norm(np.eye(3))
-    vals.append(c_i)
-    print(f"  i={i:6d}: {test_labels[j]}  c_i ≈ {c_i:.6f}   isotropy error={anis:.2e}")
-    j += 1
+# print("\nChecking free-term c at selected collocation points:")
+# for i in test_indices:
+#     C = free_term_matrix_at_point(i)
+#     c_i = np.trace(C) / 3.0
+#     anis = np.linalg.norm(C - c_i * np.eye(3)) / np.linalg.norm(np.eye(3))
+#     vals.append(c_i)
+#     print(f"  i={i:6d}: {test_labels[j]}  c_i ≈ {c_i:.6f}   isotropy error={anis:.2e}")
+#     j += 1
 
 
 #################################################################################################
@@ -810,10 +810,10 @@ for i in test_indices:
 
 #     H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(
 #         tdim
-#     )  # 0.5 * np.eye(tdim)
+#     )
 
 
-# # print("Global Matrices G and H assembled")
+# print("Global Matrices G and H assembled")
 
 # np.savez(
 #     "GH_cube.npz",
@@ -851,14 +851,14 @@ It_ = nodes2dofs(It)
 u_u = np.zeros(len(Iu_))
 t_t = np.zeros(len(It_))
 
-R = 0.15
+R = 0.3
 Xc = Yc = 0.5
 
 mask = (((pts[:, 0] - Xc) ** 2 + (pts[:, 1] - Yc) ** 2) <= R**2) & np.isclose(
     pts[:, 2], 1, atol=tol
 )
 If = np.where(mask)[0]
-
+print(len(If))
 value = np.array([0.0, 0.0, -1.0e9], dtype=float)
 
 for k, node in enumerate(It):
@@ -907,8 +907,7 @@ T = t_nodes.reshape((N, tdim))
 # -------------------- Write boundary VTK with results and BC tags --------------------
 bc_flag = np.zeros(N, dtype=np.int32)  # 0: free, 1: Dirichlet, 2: Neumann-patch
 bc_flag[Iu] = 1
-bc_flag[np.setdiff1d(It, If)] = 2
-bc_flag[If] = 3
+bc_flag[If] = 2
 
 
 np.savez(
@@ -921,5 +920,5 @@ boundary_mesh.point_data["u"] = U
 boundary_mesh.point_data["t"] = T
 boundary_mesh.point_data["bc_flag"] = bc_flag
 
-meshio.write("cube_boundary_mixedBC.vtu", boundary_mesh)
-print("Wrote cube_boundary_mixedBC.vtu")
+meshio.write("cube_bem.vtu", boundary_mesh)
+print("Wrote cube_bem.vtu")

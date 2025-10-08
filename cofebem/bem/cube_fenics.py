@@ -56,6 +56,7 @@ nu = 0.3
 lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
 mu = E / (2 * (1 + nu))
 
+
 # -------------------------------------------------------------------------------------------------------
 #  LE weak form
 # -------------------------------------------------------------------------------------------------------
@@ -105,27 +106,30 @@ bc = dirichletbc(
 
 def Gamma_t_locator(x):
     return np.isclose(x[2], 1, atol=tol) & (
-        (x[0] - 0.5) ** 2 + (x[1] - 0.5) ** 2 <= 0.15**2
+        (x[0] - 0.5) ** 2 + (x[1] - 0.5) ** 2 <= 0.3**2
     )
 
 
 Gamma_t = locate_entities_boundary(mesh, fdim, Gamma_t_locator)
 
-marker_id = 1
-
 if not Gamma_t.size:
     raise ValueError("No boundary facets found for the given locator.")
 
-Gamma_t_marker = np.full(Gamma_t.size, marker_id)
 
-meshtags = meshtags(
-    mesh,
-    fdim,
-    Gamma_t,
-    Gamma_t_marker,
-)
+dirchlet_marker = 1
+neumann_marker = 2
 
-ds = Measure("ds", domain=mesh, subdomain_data=meshtags)
+Gamma_u_marker = np.full(Gamma_u.size, dirchlet_marker, dtype=np.int32)  # Dirichlet
+Gamma_t_marker = np.full(Gamma_t.size, neumann_marker, dtype=np.int32)  # Neumann
+
+Gamma = np.concatenate([Gamma_u, Gamma_t])
+Gamma_markers = np.concatenate([Gamma_u_marker, Gamma_t_marker])
+
+perm = np.argsort(Gamma)
+
+Gamma_mt = meshtags(mesh, fdim, Gamma[perm], Gamma_markers[perm])
+
+ds = Measure("ds", domain=mesh, subdomain_data=Gamma_mt)
 
 
 f_v = Constant(mesh, np.array([0.0, 0.0, 0.0], dtype=PETSc.ScalarType))
@@ -133,7 +137,7 @@ t = Constant(mesh, np.array([0.0, 0.0, -1.0e9], dtype=PETSc.ScalarType))
 
 
 def L(v):
-    return inner(f_v, v) * dx + inner(t, v) * ds(marker_id)
+    return inner(f_v, v) * dx + inner(t, v) * ds(neumann_marker)
 
 
 # -------------------------------------------------------------------------------------------------------
@@ -145,9 +149,11 @@ problem = LinearProblem(
 )
 
 problem.solve()
+problem.u.name = "u"
 
-with XDMFFile(MPI.COMM_WORLD, f"cube_fenics.xdmf", "w") as xdmf:
+with XDMFFile(MPI.COMM_WORLD, f"cube_bcs.xdmf", "w") as xdmf:
     xdmf.write_mesh(mesh)
-    xdmf.write_function(problem.u)
+    xdmf.write_meshtags(Gamma_mt, mesh.geometry)
+    # xdmf.write_function(problem.u)
 
 print("DONE")

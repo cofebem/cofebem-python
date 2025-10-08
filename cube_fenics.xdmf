@@ -10,12 +10,21 @@
         <DataItem Dimensions="812 3" Format="HDF">cube_fenics.h5:/Mesh/mesh/geometry</DataItem>
       </Geometry>
     </Grid>
-    <Grid Name="f" GridType="Collection" CollectionType="Temporal">
-      <Grid Name="f" GridType="Uniform">
+    <Grid Name="mesh_tags" GridType="Uniform">
+      <xi:include xpointer="xpointer(/Xdmf/Domain/Grid/Geometry)" />
+      <Topology TopologyType="Triangle" NumberOfElements="189" NodesPerElement="3">
+        <DataItem Dimensions="189 3" NumberType="Int" Format="HDF">cube_fenics.h5:/MeshTags/mesh_tags/topology</DataItem>
+      </Topology>
+      <Attribute Name="mesh_tags" AttributeType="Scalar" Center="Cell">
+        <DataItem Dimensions="189 1" Format="HDF">cube_fenics.h5:/MeshTags/mesh_tags/Values</DataItem>
+      </Attribute>
+    </Grid>
+    <Grid Name="u" GridType="Collection" CollectionType="Temporal">
+      <Grid Name="u" GridType="Uniform">
         <xi:include xpointer="xpointer(/Xdmf/Domain/Grid[@GridType='Uniform'][1]/*[self::Topology or self::Geometry])" />
         <Time Value="0" />
-        <Attribute Name="f" AttributeType="Vector" Center="Node">
-          <DataItem Dimensions="812 3" Format="HDF">cube_fenics.h5:/Function/f/0</DataItem>
+        <Attribute Name="u" AttributeType="Vector" Center="Node">
+          <DataItem Dimensions="812 3" Format="HDF">cube_fenics.h5:/Function/u/0</DataItem>
         </Attribute>
       </Grid>
     </Grid>
