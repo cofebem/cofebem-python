@@ -7,16 +7,16 @@
 
 ## Description
 
-This code enables to construct contact problem as an auxilary problem and solve it using BEM solver accelerated
- by H-matrices (hierarchical matrices).
+This code enables to construct contact problem as an auxiliary problem and solve it using BEM solver accelerated by H-matrices (hierarchical matrices).
 
 ## FEM interfaces
 
+- FEniCSx
+- Z-set??
+- **A-set**
 - MFEM
 - MOFEM
-- FEniCSx
 - Code_Aster
-- **Zset**
 - moose
 - dealii
 - elemerfem
