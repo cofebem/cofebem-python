@@ -2,11 +2,9 @@
 title: "Flexibility Method Accelerated by H-matrices"
 author: "Vladislav A. Yastrebov"
 date: "November 2025"
+header-includes: |
+  \renewcommand{\vec}[1]{\mathbf{#1}}
 ---
-
-<!-- $$
-\newcommand{\vec}[1]{\mathbf{#1}}
-$$ -->
 
 # Flexibility method accelerated by $\mathcal H$-matrices
 
@@ -16,7 +14,7 @@ $$ -->
 
 To be more aligned with the BEM and potentially with the LBB, we can assign pressure degrees of freedom $p_i$ (or tractions $\vec t_i$) to element centers and displacement degrees of freedom $\vec u_j$ to nodes. Then the number of pressure DOFs will be defined by the number of faces and the type of problem $m = d_p \cdot N_{\text{e}}$, where $d_p=1$ for frictionless problems and $d_p=\mathrm{dim}$ for frictional problems. The number of displacement DOFs is given by the dimension and the number of nodes on the surface of interest $n = \mathrm{dim}\cdot N_{n}$.
 
-![Elements and degrees of freedom](elements.svg)
+![Elements and degrees of freedom](elements.pdf)
 
 ### Matrix construction
 
@@ -36,7 +34,7 @@ l(\vec v) = \int\limits_{\text{el}_i} p_0 \vec n\cdot \vec v\,dS,
 \]
 as shown in the figure below.
 
-![Direct sampling matrix construction](matrix_construction.svg)
+![Direct sampling matrix construction](matrix_construction.pdf)
 
 The $S_c$'s matrix $i$-th row is then given by 
 \[
