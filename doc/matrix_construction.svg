@@ -60,6 +60,13 @@
      id="layer1"
      transform="translate(-47.889587,-87.047916)">
     <rect
+       style="fill:#ffffff;stroke:none;stroke-width:0.499999;stroke-linecap:round;stroke-linejoin:round"
+       id="rect1"
+       width="163.70012"
+       height="130.26135"
+       x="47.889587"
+       y="87.047913" />
+    <rect
        style="fill:#b3b3b3;stroke:#000000;stroke-width:0.506521;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
        id="rect28"
        width="79.574333"
