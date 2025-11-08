@@ -3,4 +3,5 @@ tools/clusters_level*
 tools/*pdf
 python/out_elasticity/
 EXTRAs/
-
+README_fenics.md
+.vscode/
