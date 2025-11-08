@@ -9,6 +9,7 @@ Date: Nov 2025
 License: BSD 3-Clause
 """
 
+import time
 from mpi4py import MPI
 from petsc4py import PETSc
 import numpy as np
@@ -32,6 +33,8 @@ from dolfinx.io import XDMFFile
 from dolfinx.mesh import CellType, GhostMode, create_box, locate_entities_boundary, locate_entities, meshtags
 from ufl import dx, ds, grad, inner, sym, Measure
 
+N = 71
+
 @jit(nopython=True, parallel=True)
 def get_deflection(uh, boundary_dofs, force):
     n = len(boundary_dofs)
@@ -46,7 +49,7 @@ dtype = PETSc.ScalarType
 msh = create_box(
     MPI.COMM_WORLD,
     [np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0])],
-    [31, 31, 5],
+    [N, N, 5],
     CellType.hexahedron,
     ghost_mode=GhostMode.shared_facet,
 )
@@ -103,7 +106,7 @@ boundary_dofs = locate_dofs_geometrical(V, locator)
 # OPTIMIZATION: Pre-assemble all RHS vectors
 # ============================================================================
 print(f"Constructing {len(top_facets)} right-hand side vectors...")
-force_magnitude = np.pi * Es
+force_magnitude = 1.e3
 
 # Create meshtags for efficient facet marking
 msh.topology.create_connectivity(fdim, msh.topology.dim)
@@ -114,6 +117,7 @@ all_rhs = []
 
 ten_percent = max(1, len(top_facets) // 10)
 
+start = time.time()
 for i, facet_id in enumerate(top_facets):
     # Create meshtags for this single facet
     facet_tag_single = meshtags(msh, fdim, np.array([facet_id], dtype=np.int32), 
@@ -143,6 +147,7 @@ for i, facet_id in enumerate(top_facets):
     if i % ten_percent == 0:
         print(f"RHS assembly progress: {i/len(top_facets)*100:3.0f}% (facet {i+1}/{len(top_facets)})")
 
+print(f"--> CPU TIME: RHS assembly: {time.time() - start:.2f} seconds.")
 print(f"All {len(top_facets)} RHS vectors assembled.")
 
 # ============================================================================
@@ -150,6 +155,7 @@ print(f"All {len(top_facets)} RHS vectors assembled.")
 # ============================================================================
 print(f"Solving all {len(top_facets)} systems simultaneously using batch solve...")
 
+start = time.time()
 # Create dense matrix B containing all RHS vectors
 n_systems = len(top_facets)
 B = PETSc.Mat().create(comm=msh.comm)
@@ -174,12 +180,15 @@ X = PETSc.Mat().create(comm=msh.comm)
 X.setSizes([n_dofs, n_systems])
 X.setType('dense')
 X.setUp()
+print(f"--> CPU TIME: Matrix assembly: {time.time() - start:.2f} seconds.")
 
 # Solve AX = B using matrix-matrix solve
+start = time.time()
 print("Solving AX = B...")
 ksp.setOperators(A)
 ksp.matSolve(B, X)
 print(f"Batch solve completed for all {n_systems} systems!")
+print(f"--> CPU TIME: Solving system: {time.time() - start:.2f} seconds.")
 
 # Extract results into K matrix
 print("Extracting deflections...")

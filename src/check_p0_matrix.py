@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-filename = "out_elasticity/FlexData_31x31_v3.npz"
+filename = "out_elasticity/FlexData_71x71.npz"
 data = np.load(filename)
 
 element_centers = data['facet_centers']
