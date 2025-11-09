@@ -14,7 +14,7 @@ from mpi4py import MPI
 from petsc4py import PETSc
 import numpy as np
 from numba import jit, prange
-
+import os
 # Fenicsx libraries
 import ufl
 from dolfinx import default_scalar_type, mesh
@@ -33,7 +33,10 @@ from dolfinx.io import XDMFFile
 from dolfinx.mesh import CellType, GhostMode, create_box, locate_entities_boundary, locate_entities, meshtags
 from ufl import dx, ds, grad, inner, sym, Measure
 
-N = 71
+output_directory = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "out_elasticity")
+)
+N = 11
 
 @jit(nopython=True, parallel=True)
 def get_deflection(uh, boundary_dofs, force):
@@ -219,13 +222,14 @@ for i, dof_id in enumerate(boundary_dofs):
     boundary_coords[i] = V.tabulate_dof_coordinates()[dof_id]
 
 # Save K matrix, facet data, and boundary node data
-np.savez("out_elasticity/FlexData.npz", 
-         K=K, 
+filename = "FlexData_{0}x{0}.npz".format(N)
+np.savez(os.path.join(output_directory, filename), 
+         K=K.T, 
          facet_ids=top_facets,
          facet_centers=facet_centers,
          boundary_dofs=boundary_dofs,
          boundary_coords=boundary_coords)
-print("Successfully saved K matrix to out_elasticity/FlexData.npz")
+print("Successfully saved K matrix to {0}".format(os.path.join(output_directory, filename)))
 print(f"  - K matrix shape: {K.shape}")
 print(f"  - Number of facets: {len(top_facets)}")
 print(f"  - Number of boundary DOFs: {len(boundary_dofs)}")

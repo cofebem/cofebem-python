@@ -1,0 +1,33 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.8",
+    "pybind11>=2.11",
+    "numpy>=1.20",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "flexcontact"
+version = "0.1.0"
+description = "Your package with constrained CG solver"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "black", "ruff"]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+cmake.verbose = true
+
+[tool.scikit-build.sdist]
+include = [
+    "../cpp/include/**",
+    "../cpp/src/**",
+]
+
+[tool.scikit-build.cmake.define]
+BUILD_TESTING = "OFF"
