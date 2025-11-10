@@ -76,26 +76,63 @@ Again, the last term of the functional cannot be readily evaluated if $p$ and $g
 
 However, instead of handling the problem 
 $$
-g  = S_c p + g_0
+g  = S_c p + g_0,
 $$
-we can transform it into
+by multiplying it by $S_c^\top$, we can transform it into
 $$
-S_c^\top g = S_c^\top S_c p + S_c^\top g_0,
+S_c^\top M g = S_c^\top M S_c p + S_c^\top M g_0,
 $$
-then by denoting 
+where $M$ is the mass matrix.
+This form  can be obtained by enforcing the complementarity condition in a weak form:
 $$
-g' = S_c^\top g, \quad g_0' = S_c^\top g_0,\quad H = S_c^\top S_c,
+\langle p, g\rangle = \int_{\Gamma_c} p g \,dS = \sum_i  p_i \sum_j g_j \int_{\Gamma_c^i} N_j \,dS = p_i M_{ij} g_j.
 $$
-we get the system
+It could be further generalized by assuming different shape functions for the pressure $\Phi_i$ and for the displacement $N_j$ as
 $$
-g' = Hp + g_0',
+\langle p, g\rangle = \int_{\Gamma_c} p g \,dS = \sum_i  p_i \sum_j g_j \int_{\Gamma_c^i} \Phi_i N_j \,dS = p_i M_{ij} g_j.
 $$
-which would result in the quadratic problem:
+Thus weak complementarity $p^\top M g = 0$ uses the correct geometric inner product on $\Gamma_c$.
+
+### Symmetric formulation
+
+Define
 $$
-\text{minimize } \mathcal F(p) = \frac 12 p^\top H p + p^\top g'_0
+H = S_c^\top M S_c,\qquad
+b = S_c^\top M g_0,\qquad
+\lambda = M g .
 $$
+Then the weak equilibrium equation becomes
 $$
-\text{subject to } p \ge 0
+\lambda = H p + b .
+$$
+The complementarity conditions transform to
+$$
+p \ge 0,\qquad \lambda \ge 0,\qquad p\perp \lambda,
+$$
+which is a proper LCP in the *pressure space*.  
+The operator $H$ is symmetric positive semidefinite.
+
+### Equivalent quadratic program
+
+The LCP $(H,b,p,\lambda)$ is associated with the convex quadratic program
+$$
+\min_{p\ge 0}\;
+\mathcal F(p)
+= \tfrac12\, p^\top H p + b^\top p .
 $$
 
+This problem is well posed because:
 
+- $S_c^\top M S_c$ is symmetric,
+- the surface mass matrix $M$ supplies a consistent $L^2$-pairing between nodal and elemental quantities,
+
+
+### Solution methods
+
+I didn't find good solvers to solve the LCP problem directly, only NNLS (`scipy.optimize.nnls`), but I didn't succeed to make it work properly.
+
+Trying to work with the Quadratic Programming problem directly using different solvers (`quadprog.solve_qp`, `cvxopt.solvers.qp`, `scipy.sparse.osqp`) with forced symmetrization and Tikhonov smoothing
+$$
+  H_s = \tfrac12 (H^\top + H) + \lambda I
+$$
+but I never could obtain a reliable and smooth result; the solution is very sensitive to $\lambda$ parameter and the conditionning of the operator $H$ is too bad. Plan to switch to PDAS (primal–dual active-set).

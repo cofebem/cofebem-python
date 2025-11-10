@@ -58,7 +58,7 @@ msh = create_box(
 )
 
 # Define the elasticity parameters
-E = 1.0e6
+E = 1.0
 nu = 0.3
 mu = E / (2.0 * (1.0 + nu))
 Es = E/(1-nu**2)
@@ -71,7 +71,10 @@ def sigma(v):
     return 2.0 * mu * epsilon(v) + Lambda * ufl.tr(epsilon(v)) * ufl.Identity(len(v))
 
 V = functionspace(msh, ("Lagrange", 1, (msh.geometry.dim,)))
+Vg = functionspace(msh, ("Lagrange", 1))
 u, v = ufl.TrialFunction(V), ufl.TestFunction(V)
+vg = ufl.TestFunction(Vg)
+
 
 # Apply boundary condition at the bottom
 fdim = msh.topology.dim - 1
@@ -99,11 +102,24 @@ ksp.setFromOptions()
 print("Stiffness matrix assembled and solver configured.")
 
 # Get all top surface facets
+fdim = msh.topology.dim - 1
 locator = lambda x: np.isclose(x[2], 1., atol=1e-5)
-top_facets = locate_entities_boundary(msh, dim=2, marker=locator)
+top_facets = locate_entities_boundary(msh, dim=fdim, marker=locator)
+markers = np.ones(top_facets.shape, dtype=np.int32)
+mt = meshtags(msh, fdim, top_facets, markers)
+ds = ufl.Measure("ds", domain=msh, subdomain_data=mt)
 
 # Get boundary dofs for extraction
 boundary_dofs = locate_dofs_geometrical(V, locator)
+
+# Assemble mass matrix
+Lm = form(vg * ds(1))
+m_vec = assemble_vector(Lm)
+m_array = m_vec.array
+
+b_dofs_g = locate_dofs_topological(Vg, fdim, top_facets)
+mass_surface = m_array[b_dofs_g]
+
 
 # ============================================================================
 # OPTIMIZATION: Pre-assemble all RHS vectors
@@ -224,12 +240,14 @@ for i, dof_id in enumerate(boundary_dofs):
 # Save K matrix, facet data, and boundary node data
 filename = "FlexData_{0}x{0}.npz".format(N)
 np.savez(os.path.join(output_directory, filename), 
-         K=K.T, 
+         K=K.T,
+         M=mass_surface,
          facet_ids=top_facets,
          facet_centers=facet_centers,
          boundary_dofs=boundary_dofs,
          boundary_coords=boundary_coords)
 print("Successfully saved K matrix to {0}".format(os.path.join(output_directory, filename)))
 print(f"  - K matrix shape: {K.shape}")
+print(f"  - M matrix shape: {mass_surface.shape}")
 print(f"  - Number of facets: {len(top_facets)}")
 print(f"  - Number of boundary DOFs: {len(boundary_dofs)}")

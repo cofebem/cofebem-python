@@ -18,6 +18,103 @@ def _log_info(message, *args, **kwargs):
 def _log_warning(message, *args, **kwargs):
     _LOGGER.warning(message, *args, **kwargs)
 
+
+#####################################################
+##                                                 ##
+##         QUADRATIC PROGRAMMING SOLVER            ##
+##                                                 ##
+#####################################################
+def jacobi_scale(H, b, floor_ratio=1e-12, clip_ratio=1e3):
+    """
+    Symmetric Jacobi equilibration:
+      Hs = D^{-1} H D^{-1},  bs = D^{-1} b,
+    with robust floors/clipping.
+    """
+    d2 = np.diag(H).copy()
+    med = np.median(d2[d2 > 0]) if np.any(d2 > 0) else 1.0
+    delta = max(med * floor_ratio, 1e-30)         # floor for zeros/tiny diags
+    d = np.sqrt(np.maximum(d2, delta))
+
+    # clip extreme scales to keep condition reasonable
+    d /= np.median(d)                              # center around 1
+    d = np.clip(d, 1/clip_ratio, clip_ratio)
+
+    Dinv = 1.0 / d
+    Hs = (Dinv[:, None] * H) * Dinv[None, :]
+    bs = Dinv * b
+    return Hs, bs, Dinv
+
+def pick_lambda(Hs, alpha=1e-10, min_abs=1e-16):
+    d = np.diag(Hs)
+    base = np.median(d) if np.any(d>0) else 1.0
+    return max(alpha * base, min_abs)
+
+
+
+def solve_contact_qp(K, m, g0, lam=0, backend="auto"):
+    n, nfac = K.shape
+    assert m.shape == (n,) and g0.shape == (n,)
+
+    WK = (m[:, None]) * K
+    H  = K.T @ WK
+    b  = - K.T @ (m * g0)
+    # Scaling to improve conditioning
+    Hs, bs, Dinv = jacobi_scale(H, b, floor_ratio=1e-12, clip_ratio=1e3)
+
+    # pick backend
+    if backend in ("auto", "quadprog"):
+        try:
+            import quadprog
+            # Tiny Tikhonov if needed (make PD for quadprog)
+            if lam == 0:
+                lam = pick_lambda(Hs, alpha=1e-10, min_abs=1e-16)
+            Gs = 0.5 * (Hs + Hs.T) + lam * np.eye(nfac)
+            # quadprog: min 0.5 x^T G x - a^T x  s.t. C^T x >= b
+            a = -bs
+            C = np.eye(nfac)
+            bineq = np.zeros(nfac)
+            y = quadprog.solve_qp(Gs, a, C, bineq)[0]
+            p = (1.0 / Dinv) * np.maximum(y, 0.0)  # unscale
+            # p = np.maximum(y, 0.0)
+            return p
+        except Exception as e:
+            if backend == "quadprog":
+                raise
+            # fall through to cvxopt / osqp
+    if backend in ("cvxopt"):
+        try:
+            from cvxopt import matrix, solvers
+            P = matrix(0.5*(Hs+Hs.T))  # PSD ok
+            q = matrix(bs)
+            G = matrix(-np.eye(nfac))
+            h = matrix(np.zeros(nfac))
+            solvers.options["show_progress"] = False
+            sol = solvers.qp(P, q, G, h)
+            y = np.array(sol["x"]).ravel()
+            p = (1.0 / Dinv) * np.maximum(y, 0.0)
+            # p = np.maximum(y, 0.0)
+            return p
+        except Exception:
+            if backend == "cvxopt":
+                raise
+    # OSQP fallback
+    print("Using OSQP")
+    import scipy.sparse as sp, osqp
+    P = sp.csc_matrix(0.5*(Hs+Hs.T))  # PSD ok
+    q = bs
+    A = sp.eye(nfac, format="csc")
+    l = np.zeros(nfac)           # x >= 0
+    u = np.full(nfac, np.inf)
+    prob = osqp.OSQP()
+    prob.setup(P, q, A, l, u, polish=True, verbose=False)
+    res = prob.solve()
+    y = res.x
+    p = (1.0 / Dinv) * np.maximum(y, 0.0)
+    # p = np.maximum(y, 0.0)
+    return p
+
+
+
 """
     Active set solver using NNLS solver from scipy.optimize
 """
@@ -492,21 +589,11 @@ def constrained_CG_p0p1(
    Solver for pressure defined at nodes
 """
 # Constrained CG python
-def constrained_CG_p1p1(K, error_type, coord, dofs, gap, max_iter, tolerance, pressure_factor=1e12, initial_pressure=None):
+def constrained_CG_p1p1(K, error_type, gap, max_iter, tolerance, initial_pressure):
     error_history = np.zeros((max_iter,3))
     ub = -gap
-    # print(" {0:10s}   {1:10s}   {2:10s}  {3:10s}".format("Iteration", "Error sqrt(R1*R2)", "Displ. Error, R1 ", "Orthogonality, R2"))
-    # Warmed start does not work well
-    if initial_pressure is not None:        
-        # p = initial_pressure
-        # p[np.logical_and(gap<0, p == 0)] = pressure_factor * gap[np.logical_and(gap<0, p == 0)]
-        # p[gap>0] = 0
-        p = np.maximum(-gap, 0) * pressure_factor
-    else:
-        p = np.zeros_like(ub)
-        p = np.maximum(-gap, 0) * pressure_factor
-
-    w = np.inner(K, p) - ub
+    p = initial_pressure
+    w = K @ p - ub
     # w -= np.mean(w) #new
     t  = w
     t_ = np.zeros_like(w)
@@ -517,7 +604,7 @@ def constrained_CG_p1p1(K, error_type, coord, dofs, gap, max_iter, tolerance, pr
         if iter > 0:
             t[p>0] = w[p>0] + d * error/error_ * t_[p>0]
             t[p<=0] = 0
-        q = np.inner(K, t)
+        q = K @ t
         tau = np.inner(w, t) / np.inner(t, q)
         p = p - tau * t
         p = np.maximum(p, 0)
@@ -531,7 +618,7 @@ def constrained_CG_p1p1(K, error_type, coord, dofs, gap, max_iter, tolerance, pr
             p[set_I] -= tau * w[set_I]
         t_ = t
 
-        w = np.inner(K, p) - ub
+        w = K @ p - ub
         nw = np.linalg.norm(w, 2)
 
         error_ = error
@@ -548,10 +635,12 @@ def constrained_CG_p1p1(K, error_type, coord, dofs, gap, max_iter, tolerance, pr
                 error_history[iter,0] = displ_error
                 error_history[iter,1] = abs((error - error_)/error_)
                 error_history[iter,2] = ort
-                return p, np.inner(K,p), error_history[:iter+1]
+                return p, K @ p, error_history[:iter+1]
         error_history[iter,0] = displ_error
         error_history[iter,1] = error
         error_history[iter,2] = ort
+
+        print("iter: ", iter, "error: ", error)
         if error < tolerance:
             break
-    return p, np.inner(K,p), error_history[:iter+1]
+    return p, K @ p, error_history[:iter+1]

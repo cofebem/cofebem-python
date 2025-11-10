@@ -1,12 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-filename = "out_elasticity/FlexData_71x71.npz"
+filename = "../out_elasticity/FlexData_21x21.npz"
 data = np.load(filename)
 
 element_centers = data['facet_centers']
 boundary_coords = data['boundary_coords']
-K = data['K'].T
+K = data['K']
 p = np.zeros(K.shape[1])
 print("p.shape = ", p.shape)
 print("K.shape = ", K.shape)
@@ -31,7 +31,13 @@ selected_elements = np.where(filter)[0]
 p0 = 1e3  # Max pressure value
 x = element_centers[selected_elements, 0]
 y = element_centers[selected_elements, 1]
-p[selected_elements] = p0 / np.sqrt(1-((x-x0)**2 + (y-y0)**2)/a**2)
+p[selected_elements] = p0 * np.sqrt(1-((x-x0)**2 + (y-y0)**2)/a**2)
+
+print("Shapes:")
+print("p.shape = ", p.shape)
+print("K.shape = ", K.shape)
+print("element_centers.shape = ", element_centers.shape)
+print("boundary_coords.shape = ", boundary_coords.shape)
 
 fig,ax = plt.subplots()
 plt.xlim(-0.1,1.1)

@@ -124,84 +124,6 @@ def build_facet_projection_matrix(nodal_coords, facet_centers):
 
     return projection
 
-from py_solvers import constrained_CG_p0p1 as constrained_CG
-# # Constrained CG python
-# def constrained_CG(K, error_type, coord, dofs, gap, max_iter, tolerance,
-#                    initial_pressure=None, projection_matrix=None, facet_centers=None):
-#     num_nodes, num_facets = K.shape
-
-#     print("K shape in ", K.shape)
-#     print("initial_pressure shape in ", initial_pressure.shape)
-#     print("gap shape in ", gap.shape)
-
-#     if initial_pressure is None or initial_pressure.shape[0] != K.shape[1]:
-#         raise ValueError(
-#             "Initial pressure must be provided with length equal to the number of faces ({0}).".format(K.shape[1])
-#         )
-#     p = initial_pressure.copy()
-
-#     error_history = np.zeros((max_iter, 3))
-#     ub = -gap
-
-#     w = K @ p - ub
-#     t = w.copy()
-#     t_ = np.zeros_like(w)
-#     d = 0
-#     error = 1.0
-#     error_ = 1.0
-#     for iter in range(max_iter):
-#         if iter > 0:
-#             active = p > 0
-#             t[active] = w[active] + d * error / error_ * t_[active]
-#             t[~active] = 0
-#         q = K @ t
-#         denom = np.dot(t, q)
-#         if denom <= 0:
-#             denom = np.dot(t, t)
-#             if denom <= 0:
-#                 denom = 1.0
-#         tau = np.dot(w, t) / denom
-#         p = p - tau * t
-#         p = np.maximum(p, 0)
-#         zero_pressure = np.where(p == 0)[0]
-#         penetration = np.where(w < 0)[0]
-#         set_I = np.intersect1d(zero_pressure, penetration)
-#         if len(set_I) == 0:
-#             d = 1
-#         else:
-#             d = 0
-#             p[set_I] -= tau * w[set_I]
-#             p = np.maximum(p, 0)
-#         t_ = t
-#         w = K @ p - ub
-#         nw = np.linalg.norm(w, 2)
-
-#         error_ = error
-#         if nw > 0:
-#             displ_error = np.linalg.norm(w[p > 0], 2) / nw
-#             ort = np.abs(np.dot(w, p) / nw)
-#         else:
-#             displ_error = 0.0
-#             ort = 0.0
-
-#         if error_type == "displacement":
-#             error = displ_error
-#         elif error_type == "mix":
-#             error = np.sqrt(displ_error * ort)
-#         elif error_type == "nw":
-#             error = nw
-#             denominator = abs(error_) if error_ != 0 else 1.0
-#             if abs(error - error_) / denominator < tolerance:
-#                 error_history[iter, 0] = displ_error
-#                 error_history[iter, 1] = abs(error - error_) / denominator
-#                 error_history[iter, 2] = ort
-#                 return p, K @ p, error_history[:iter + 1]
-#         error_history[iter, 0] = displ_error
-#         error_history[iter, 1] = error
-#         error_history[iter, 2] = ort
-#         if error < tolerance:
-#             break
-#     return p, K @ p, error_history[:iter + 1]
 
 def build_node_of_elem(facet_centers, nodal_coords, nodal_ids, k=4):
     """
@@ -235,212 +157,109 @@ def build_node_of_elem(facet_centers, nodal_coords, nodal_ids, k=4):
 
     return node_of_elem
 
+def plot_results(displacement, pressure, facet_centers, nodal_coords, tri_facet, tri_nodal, contact_center, Rindenter, displ):
+    # Set viewing angles
+    elevation_angle = 60  # Lower number to "raise" the camera view
+    azimuth_angle = -60  # Adjust as needed
+
+    plt.rcParams['figure.figsize'] = [10,5]
+    fig, ax = plt.subplots(1, 2, subplot_kw={'projection': '3d'})
+
+    ax[0].view_init(elev=elevation_angle, azim=azimuth_angle)
+    ax[1].view_init(elev=elevation_angle, azim=azimuth_angle)
+
+    ax[0].set_xlim([-0.,1.])
+    ax[0].set_ylim([-0.,1.])
+    # ax[0].set_zlim([-displ,0])
+    x = np.linspace(-0.,1.,100)
+    y = np.linspace(-0.,1.,100)
+    X,Y = np.meshgrid(x,y)
+    Z = parabolic_indenter(X,Y, contact_center[0], contact_center[1], Rindenter, displ) - nodal_coords[0,2]
+    Z[Z>0.] = np.nan
+    surf1 = ax[0].plot_trisurf(nodal_coords[:,0], nodal_coords[:,1], -displacement, triangles=tri_nodal.triangles, cmap='coolwarm') #, vmin = -displ, vmax = 0)
+    cb1 = fig.colorbar(surf1, ax=ax[0], shrink=0.6, aspect=10, orientation='horizontal')
+    cb1.set_label("$u_z$")
+    # ax[0].plot_surface(X,Y,Z, alpha=0.1, cmap='gray',  rcount = X.shape[0], ccount = X.shape[1], edgecolor='k', linewidth=0.1)
+    ax[0].set_title("Vertical displacement")
+
+    ax[1].set_xlim([0,1])
+    ax[1].set_ylim([0,1])
+    # ax[1].set_zlim([0,16])
+    surf2 = ax[1].plot_trisurf(facet_centers[:,0], facet_centers[:,1], pressure, triangles=tri_facet.triangles, cmap='coolwarm') #, vmin = 0, vmax = 1.5e6)
+    cb2 = fig.colorbar(surf2, ax=ax[1], shrink=0.6, aspect=10, orientation='horizontal')
+    cb2.set_label("$p/E$")
+    ax[1].set_title("Pressure/Young's modulus")
+    fig.tight_layout()
+    fig.savefig("Contact_parabolic_indenter.png", dpi=300)
+
+def plot_gaps(gap, g, tri_nodal):
+    vmin = min(gap.min(), g.min())
+    vmax = max(gap.max(), g.max())
+    fig_gap, axes_gap = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+
+    contour_init = axes_gap[0].tricontourf(tri_nodal, gap, levels=50, cmap="coolwarm", vmin=vmin, vmax=vmax)
+    axes_gap[0].set_title("Initial gap")
+    axes_gap[0].set_xlabel("x")
+    axes_gap[0].set_ylabel("y")
+    axes_gap[0].set_aspect("equal")
+
+    contour_final = axes_gap[1].tricontourf(tri_nodal, g, levels=50, cmap="coolwarm", vmin=vmin, vmax=vmax)
+    axes_gap[1].set_title("Final gap")
+    axes_gap[1].set_xlabel("x")
+    axes_gap[1].set_ylabel("y")
+    axes_gap[1].set_aspect("equal")
+
+    cbar = fig_gap.colorbar(contour_final, ax=axes_gap.ravel().tolist(), shrink=0.8)
+    cbar.set_label("gap")
+
+    fig_gap.savefig(f"gap_comparison.png", dpi=300)
+
+
 def main():
-    # The stored BEM matrix is located in the file FlexData.npz
-    fname = "../out_elasticity/FlexData_21x21.npz"
+    # The stored BEM matrix is located in the file FlexData_{N}x{N}.npz
+    N = 21
+    fname = "../out_elasticity/FlexData_{0}x{0}.npz".format(N)
     data = np.load(fname)
+    K = data["K"]
+    M = np.asarray(data["M"],dtype=float)
+    facet_centers = data["facet_centers"]
+    nodal_coords = data["boundary_coords"]
 
-    K, facet_ids, facet_centers, nodal_dofs, nodal_coords = data["K"],data["facet_ids"],data["facet_centers"],data["boundary_dofs"],data["boundary_coords"]
-
-    node_of_elem = build_node_of_elem(facet_centers, nodal_coords, nodal_dofs)
-    node_of_elem_idx = ids_to_indices(node_of_elem, nodal_dofs)
-
-    tri_facet = Triangulation(facet_centers[:,0], facet_centers[:,1])
-    tri_nodal = Triangulation(nodal_coords[:,0], nodal_coords[:,1])
-    facet_projection = build_facet_projection_matrix(nodal_coords, facet_centers)
+    n, mfac = K.shape
+    assert M.shape[0] == n
 
     # Vertical penetration of the indenter
-    displ = 0.04
+    displ = 0.2
     # Indenter radius
-    Rindenter = 2.
+    Rindenter = 1.
+
+
+    contact_center = np.array([0.5, 0.5])
+    x0 = contact_center[0]
+    y0 = contact_center[1]
+    R = Rindenter
+    z0 = nodal_coords[0,2] - displ
+    gap = parabolic_indenter(nodal_coords[:,0], nodal_coords[:,1], x0, y0, R, z0) \
+        - nodal_coords[:,2]
 
     # Solve the problem
-    max_iter = 20
-    tolerance = 1e-5
-    error_type = "displacement"
-    # pfactor is factor linking the trial pressure to the initial penetration for warmed-up start of the CG
-    E = 1.0e9
-    nu = 0.3
-    E_star = E / (1 - nu**2)
-    pfactor = 1e6
-    # Number of frames for the animation
-    Nframes = 1
+    from py_solvers import solve_contact_qp
 
-    # Example with animation
-    ANIMATION = True
-    if ANIMATION == True:
-        x_center = np.linspace(0.5,1.,Nframes)
-        # x_center = np.linspace(0.5,0.5,1)
-        for frame, xc in enumerate(x_center):
-            contact_center = np.array([xc, 0.5])
-            # Uncomment indenter type
-            # gap = flat_indenter(coords[:,0], coords[:,1], contact_center[0], contact_center[1], Rindenter, coords[0,2]-displ) - coords[:,2]
-            # gap = conical_indenter(coords[:,0], coords[:,1], contact_center[0], contact_center[1], Rindenter, coords[0,2]-displ) - coords[:,2]
-            gap = parabolic_indenter(nodal_coords[:,0], nodal_coords[:,1], contact_center[0], contact_center[1], Rindenter, nodal_coords[0,2]-displ) - nodal_coords[:,2]
-            penetrating_nodes = np.where(gap < 0)[0]
+    pressure = solve_contact_qp(K, M, gap, lam=1e-6, backend="quadprog")
+    displacement =  K @ pressure
+    g = gap - displacement
 
-            # Plot the initial gap for debugging
-            # print("Initial gap in ", np.min(gap), np.max(gap))
-            # fig_gap, ax_gap = plt.subplots(figsize=(6, 5))
-            # contour = ax_gap.tricontourf(tri_nodal, gap, levels=50, cmap="coolwarm")
-            # ax_gap.set_title("Initial gap")
-            # ax_gap.set_xlabel("x")
-            # ax_gap.set_ylabel("y")
-            # ax_gap.set_aspect("equal")
-            # fig_gap.colorbar(contour, ax=ax_gap, label="gap")
-            # plt.tight_layout()
-            # plt.show()
-            # EO Plot the initial gap for debugging
+    print("displacement in ", np.min(displacement), np.max(displacement))
+    print("pressure in ", np.min(pressure), np.max(pressure))
 
-            # Solve the problem
-            start = time.time()
-            if frame == 0:
-                p_trial_nodes = pfactor * np.maximum(-gap, 0)
-                p_trial_facet = facet_projection @ p_trial_nodes
-                p_trial_facet = np.maximum(p_trial_facet, 0)
-                print("p_trial_facet in ", np.min(p_trial_facet), np.max(p_trial_facet))
-                # Try scipy solver
-                from py_solvers import as_nnls_stable
-                pressure, g, info = as_nnls_stable(
-                    K, gap, node_of_elem_idx,
-                    use_minus=True,
-                    max_outer=20,
-                    tau_add=None, tau_rem=None,  # auto-scaled
-                    ptol=0.0,                    # auto absolute
-                    hold_iters=3,
-                    lam=0.0, lam_bump=1e-6,
-                    cont_every=3, cont_factor=0.5,
-                    verbose=True
-                )
-                displacement = (g - gap)
-                print("iters:", info['iters'])
+    # Plot the initial and final gaps on a single figure, sharing the color scale
+    PLOT = True
+    if PLOT:
+        tri_facet = Triangulation(facet_centers[:,0], facet_centers[:,1])
+        tri_nodal = Triangulation(nodal_coords[:,0], nodal_coords[:,1])
+        plot_gaps(gap, g, tri_nodal)
 
-                # pressure, displacement, info = constrained_CG(
-                #     K,
-                #     gap,
-                #     tolerance,
-                #     p_trial_facet,
-                #     node_of_elem_idx,
-                #     max_iter
-                # )
-                # print(info)
-            else:   
-                pressure, displacement, info = constrained_CG(
-                    K,
-                    gap,
-                    tolerance,
-                    pressure,
-                    node_of_elem_idx,
-                    max_iter
-                )
-                print(info)
-            # print("Iters: {0:3d}, Error {1:.3e}".format(len(error_history), error_history[-1,1]))
-
-            print("displacement in ", np.min(displacement), np.max(displacement))
-            print("pressure in ", np.min(pressure), np.max(pressure))
-    ## Plot using Matplotlib
-
-            # Set viewing angles
-            elevation_angle = 60  # Lower number to "raise" the camera view
-            azimuth_angle = -60  # Adjust as needed
-
-            plt.rcParams['figure.figsize'] = [10,5]
-            fig, ax = plt.subplots(1, 2, subplot_kw={'projection': '3d'})
-
-            ax[0].view_init(elev=elevation_angle, azim=azimuth_angle)
-            ax[1].view_init(elev=elevation_angle, azim=azimuth_angle)
-
-            ax[0].set_xlim([-0.,1.])
-            ax[0].set_ylim([-0.,1.])
-            # ax[0].set_zlim([-displ,0])
-            x = np.linspace(-0.,1.,100)
-            y = np.linspace(-0.,1.,100)
-            X,Y = np.meshgrid(x,y)
-            # Z = parabolic_indenter(X,Y, contact_center[0], contact_center[1], Rindenter, coords[0,2]-displ) - coords[0,2]
-            # Z = conical_indenter(X,Y, contact_center[0], contact_center[1], Rindenter, coords[0,2]-displ) - coords[0,2]
-            Z = flat_indenter(X,Y, contact_center[0], contact_center[1], Rindenter, nodal_coords[0,2]-displ) - nodal_coords[0,2]
-            Z[Z>0.] = np.nan
-            surf1 = ax[0].plot_trisurf(nodal_coords[:,0], nodal_coords[:,1], -displacement, triangles=tri_nodal.triangles, cmap='coolwarm') #, vmin = -displ, vmax = 0)
-            cb1 = fig.colorbar(surf1, ax=ax[0], shrink=0.6, aspect=10, orientation='horizontal')
-            cb1.set_label("$u_z$")
-            # ax[0].plot_surface(X,Y,Z, alpha=0.1, cmap='gray',  rcount = X.shape[0], ccount = X.shape[1], edgecolor='k', linewidth=0.1)
-            ax[0].set_title("Vertical displacement")
-
-            ax[1].set_xlim([0,1])
-            ax[1].set_ylim([0,1])
-            # ax[1].set_zlim([0,16])
-            surf2 = ax[1].plot_trisurf(facet_centers[:,0], facet_centers[:,1], pressure, triangles=tri_facet.triangles, cmap='coolwarm') #, vmin = 0, vmax = 1.5e6)
-            cb2 = fig.colorbar(surf2, ax=ax[1], shrink=0.6, aspect=10, orientation='horizontal')
-            cb2.set_label("$p/E$")
-            ax[1].set_title("Pressure/Young's modulus")
-            fig.tight_layout()
-            fig.savefig("Contact_cone_{0:03d}.png".format(frame), dpi=300)
-
-    # Plot with Pyvista 
-            # # Create a PyVista mesh for the deformed surface
-            # Config = np.zeros_like(coords)
-            # Config[:,0] = coords[:,0]
-            # Config[:,1] = coords[:,1]
-            # Config[:,2] = -displacement
-            # cloud = pv.PolyData(Config)
-            # cloud["z"] = -displacement  # Add displacement as a scalar array
-            # surf = cloud.delaunay_2d(alpha=0.1)
-            
-            # Nr = 10
-            # dx = 0.6*R/Nr
-            # Ntheta = 30
-            # Ind = np.zeros((Nr*Ntheta, 3))
-            # for ir in range(Nr):
-            #     r = ir*dx
-            #     for it in range(Ntheta):                
-            #         dt = 2*np.pi/Ntheta
-            #         theta = it*dt
-            #         Ind[it+ir*Ntheta,0] = contact_center[0] + r*np.cos(theta)
-            #         Ind[it+ir*Ntheta,1] = contact_center[1] + r*np.sin(theta)
-            #         Ind[it+ir*Ntheta,2] = parabolic_indenter(Ind[it+ir*Ntheta,0], Ind[it+ir*Ntheta,1], contact_center[0], contact_center[1], R, coords[0,2]-displ) - coords[0,2] + 1e-3 # - displ + 1e-3
-            # cloud2 = pv.PolyData(Ind)
-            # cloud2["z"] = Ind[:,2]*0  # Add displacement as a scalar array
-            # surf2 = cloud2.delaunay_2d(alpha=0.1)
-
-            # # Create a plotter object
-            # plotter = pv.Plotter(off_screen=True)
-
-            # # Add the indenter
-            # plotter.add_mesh(surf2, scalars="z", cmap='grey', opacity=0.25, show_edges=True, clim=[-0.2, 0])
-            # # Add the deformed surface to the plotter
-            # plotter.add_mesh(surf, scalars="z", cmap='coolwarm', clim=[-0.2, 0])
-
-            # # zoom_to_data(plotter, my_bounds=[-0.25,1.25,-0.25,1.25,-0.2,0])
-            # zoom_to_data(plotter, my_bounds=[0,1,0,1,-0.25,0.25])
-
-            # # Show the plot
-            # # plotter.show()
-            # # Save plotter file
-            # plotter.screenshot("Contact_displ_{0:03d}.png".format(frame), transparent_background=True)
-            # plotter.close()
-
-            # # Pyvista output for pressure
-            # plotter = pv.Plotter(off_screen=True)
-
-            # # Create a PyVista mesh for the pressure
-            # Config = np.zeros_like(coords)
-            # Config[:,0] = coords[:,0]
-            # Config[:,1] = coords[:,1]
-            # Config[:,2] = pressure*np.pi*Es/2e6
-            # cloud = pv.PolyData(Config)
-            # cloud["z"] = pressure*np.pi*Es/2e6  # Add displacement as a scalar array
-            # surf = cloud.delaunay_2d(alpha=0.1)        
-
-            # # Add the deformed surface to the plotter
-            # plotter.add_mesh(surf, scalars="z", cmap='coolwarm', clim=[0, 4/20])
-
-            # zoom_to_data(plotter, my_bounds=[0,1,0,1,-0.25,0.25])
-
-            # # Show the plot
-            # # plotter.show()
-            # # Save plotter file
-            # plotter.screenshot("Contact_pressure_{0:03d}.png".format(frame), transparent_background=True)
-
+        plot_results(displacement, pressure, facet_centers, nodal_coords, tri_facet, tri_nodal, contact_center, Rindenter, displ)
 
 if __name__ == "__main__":
     main()
