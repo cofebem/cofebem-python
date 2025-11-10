@@ -63,6 +63,20 @@ def _flat_indenter(x,y,x0,y0,R,z0):
 
 flat_indenter = np.vectorize(_flat_indenter)
 
+def ids_to_indices(node_of_elem_ids, nodal_ids):
+    """
+    node_of_elem_ids : list[np.ndarray]  # IDs per element (your current object)
+    nodal_ids        : (n,) array of node IDs aligned with g, K rows
+    returns          : list[np.ndarray] with 0..n-1 indices
+    """
+    id2idx = {int(nid): i for i, nid in enumerate(nodal_ids)}
+    node_of_elem_idx = []
+    for ids in node_of_elem_ids:
+        idxs = np.fromiter((id2idx[int(x)] for x in ids), dtype=int, count=len(ids))
+        node_of_elem_idx.append(idxs)
+    return node_of_elem_idx
+
+
 
 def build_facet_projection_matrix(nodal_coords, facet_centers):
     """
@@ -110,128 +124,152 @@ def build_facet_projection_matrix(nodal_coords, facet_centers):
 
     return projection
 
+from py_solvers import constrained_CG_p0p1 as constrained_CG
+# # Constrained CG python
+# def constrained_CG(K, error_type, coord, dofs, gap, max_iter, tolerance,
+#                    initial_pressure=None, projection_matrix=None, facet_centers=None):
+#     num_nodes, num_facets = K.shape
 
-# Constrained CG python
-def constrained_CG(K, error_type, coord, dofs, gap, max_iter, tolerance,
-                   initial_pressure=None, projection_matrix=None, facet_centers=None):
-    num_nodes, num_facets = K.shape
+#     print("K shape in ", K.shape)
+#     print("initial_pressure shape in ", initial_pressure.shape)
+#     print("gap shape in ", gap.shape)
 
-    if initial_pressure is None or initial_pressure.shape[0] != num_facets:
-        raise ValueError(
-            "Initial pressure must be provided with length equal to the number of facets ({0}).".format(num_facets)
-        )
-    p = initial_pressure.copy()
+#     if initial_pressure is None or initial_pressure.shape[0] != K.shape[1]:
+#         raise ValueError(
+#             "Initial pressure must be provided with length equal to the number of faces ({0}).".format(K.shape[1])
+#         )
+#     p = initial_pressure.copy()
 
-    if projection_matrix is None:
-        if facet_centers is None:
-            raise ValueError("facet_centers must be provided when projection_matrix is not supplied.")
-        projection_matrix = build_facet_projection_matrix(coord, facet_centers)
+#     error_history = np.zeros((max_iter, 3))
+#     ub = -gap
 
-    if projection_matrix.shape != (num_facets, num_nodes):
-        raise ValueError(
-            "Projection matrix must have shape ({0}, {1}). Received {2}.".format(
-                num_facets, num_nodes, projection_matrix.shape
-            )
-        )
+#     w = K @ p - ub
+#     t = w.copy()
+#     t_ = np.zeros_like(w)
+#     d = 0
+#     error = 1.0
+#     error_ = 1.0
+#     for iter in range(max_iter):
+#         if iter > 0:
+#             active = p > 0
+#             t[active] = w[active] + d * error / error_ * t_[active]
+#             t[~active] = 0
+#         q = K @ t
+#         denom = np.dot(t, q)
+#         if denom <= 0:
+#             denom = np.dot(t, t)
+#             if denom <= 0:
+#                 denom = 1.0
+#         tau = np.dot(w, t) / denom
+#         p = p - tau * t
+#         p = np.maximum(p, 0)
+#         zero_pressure = np.where(p == 0)[0]
+#         penetration = np.where(w < 0)[0]
+#         set_I = np.intersect1d(zero_pressure, penetration)
+#         if len(set_I) == 0:
+#             d = 1
+#         else:
+#             d = 0
+#             p[set_I] -= tau * w[set_I]
+#             p = np.maximum(p, 0)
+#         t_ = t
+#         w = K @ p - ub
+#         nw = np.linalg.norm(w, 2)
 
-    K_local = projection_matrix @ K
-    gap_local = projection_matrix @ gap
+#         error_ = error
+#         if nw > 0:
+#             displ_error = np.linalg.norm(w[p > 0], 2) / nw
+#             ort = np.abs(np.dot(w, p) / nw)
+#         else:
+#             displ_error = 0.0
+#             ort = 0.0
 
-    error_history = np.zeros((max_iter, 3))
-    ub = -gap_local
+#         if error_type == "displacement":
+#             error = displ_error
+#         elif error_type == "mix":
+#             error = np.sqrt(displ_error * ort)
+#         elif error_type == "nw":
+#             error = nw
+#             denominator = abs(error_) if error_ != 0 else 1.0
+#             if abs(error - error_) / denominator < tolerance:
+#                 error_history[iter, 0] = displ_error
+#                 error_history[iter, 1] = abs(error - error_) / denominator
+#                 error_history[iter, 2] = ort
+#                 return p, K @ p, error_history[:iter + 1]
+#         error_history[iter, 0] = displ_error
+#         error_history[iter, 1] = error
+#         error_history[iter, 2] = ort
+#         if error < tolerance:
+#             break
+#     return p, K @ p, error_history[:iter + 1]
 
-    w = K_local @ p - ub
-    t = w.copy()
-    t_ = np.zeros_like(w)
-    d = 0
-    error = 1.0
-    error_ = 1.0
-    for iter in range(max_iter):
-        if iter > 0:
-            active = p > 0
-            t[active] = w[active] + d * error / error_ * t_[active]
-            t[~active] = 0
-        q = K_local @ t
-        denom = np.dot(t, q)
-        if denom <= 0:
-            denom = np.dot(t, t)
-            if denom <= 0:
-                denom = 1.0
-        tau = np.dot(w, t) / denom
-        p = p - tau * t
-        p = np.maximum(p, 0)
-        zero_pressure = np.where(p == 0)[0]
-        penetration = np.where(w < 0)[0]
-        set_I = np.intersect1d(zero_pressure, penetration)
-        if len(set_I) == 0:
-            d = 1
-        else:
-            d = 0
-            p[set_I] -= tau * w[set_I]
-            p = np.maximum(p, 0)
-        t_ = t
-        w = K_local @ p - ub
-        nw = np.linalg.norm(w, 2)
+def build_node_of_elem(facet_centers, nodal_coords, nodal_ids, k=4):
+    """
+    For each quad facet, find its 4 nodes by nearest-neighbour search.
 
-        error_ = error
-        if nw > 0:
-            displ_error = np.linalg.norm(w[p > 0], 2) / nw
-            ort = np.abs(np.dot(w, p) / nw)
-        else:
-            displ_error = 0.0
-            ort = 0.0
+    Inputs
+    ------
+    facet_centers : (m, 3) array
+        Coordinates of facet centers
+    nodal_coords  : (n, 3) array
+        Coordinates of all nodes
+    nodal_ids     : (n,) int array
+        Node IDs (global numbering)
+    k : int
+        Number of nearest nodes to return (4 for quads)
 
-        if error_type == "displacement":
-            error = displ_error
-        elif error_type == "mix":
-            error = np.sqrt(displ_error * ort)
-        elif error_type == "nw":
-            error = nw
-            denominator = abs(error_) if error_ != 0 else 1.0
-            if abs(error - error_) / denominator < tolerance:
-                error_history[iter, 0] = displ_error
-                error_history[iter, 1] = abs(error - error_) / denominator
-                error_history[iter, 2] = ort
-                return p, K @ p, error_history[:iter + 1]
-        error_history[iter, 0] = displ_error
-        error_history[iter, 1] = error
-        error_history[iter, 2] = ort
-        if error < tolerance:
-            break
-    return p, K @ p, error_history[:iter + 1]
+    Output
+    ------
+    node_of_elem : list of length m
+        node_of_elem[e] is an array of node IDs attached to facet e,
+        sorted by distance.
+    """
+    from scipy.spatial import cKDTree
+    tree = cKDTree(nodal_coords)
+
+    node_of_elem = []
+    for center in facet_centers:
+        dist, idx = tree.query(center, k=k)
+        node_ids = nodal_ids[idx]
+        node_of_elem.append(node_ids)
+
+    return node_of_elem
 
 def main():
     # The stored BEM matrix is located in the file FlexData.npz
-    fname = "../out_elasticity/FlexData_11x11.npz"
+    fname = "../out_elasticity/FlexData_21x21.npz"
     data = np.load(fname)
 
     K, facet_ids, facet_centers, nodal_dofs, nodal_coords = data["K"],data["facet_ids"],data["facet_centers"],data["boundary_dofs"],data["boundary_coords"]
+
+    node_of_elem = build_node_of_elem(facet_centers, nodal_coords, nodal_dofs)
+    node_of_elem_idx = ids_to_indices(node_of_elem, nodal_dofs)
 
     tri_facet = Triangulation(facet_centers[:,0], facet_centers[:,1])
     tri_nodal = Triangulation(nodal_coords[:,0], nodal_coords[:,1])
     facet_projection = build_facet_projection_matrix(nodal_coords, facet_centers)
 
     # Vertical penetration of the indenter
-    displ = 0.15
+    displ = 0.04
     # Indenter radius
-    Rindenter = 1.
+    Rindenter = 2.
 
     # Solve the problem
-    max_iter = 100
+    max_iter = 20
     tolerance = 1e-5
-    error_type = "nw"
+    error_type = "displacement"
     # pfactor is factor linking the trial pressure to the initial penetration for warmed-up start of the CG
     E = 1.0e9
     nu = 0.3
     E_star = E / (1 - nu**2)
-    pfactor = E_star/100.
+    pfactor = 1e6
     # Number of frames for the animation
     Nframes = 1
 
     # Example with animation
     ANIMATION = True
     if ANIMATION == True:
-        x_center = np.linspace(-0.,1.,Nframes)
+        x_center = np.linspace(0.5,1.,Nframes)
         # x_center = np.linspace(0.5,0.5,1)
         for frame, xc in enumerate(x_center):
             contact_center = np.array([xc, 0.5])
@@ -241,38 +279,65 @@ def main():
             gap = parabolic_indenter(nodal_coords[:,0], nodal_coords[:,1], contact_center[0], contact_center[1], Rindenter, nodal_coords[0,2]-displ) - nodal_coords[:,2]
             penetrating_nodes = np.where(gap < 0)[0]
 
+            # Plot the initial gap for debugging
+            # print("Initial gap in ", np.min(gap), np.max(gap))
+            # fig_gap, ax_gap = plt.subplots(figsize=(6, 5))
+            # contour = ax_gap.tricontourf(tri_nodal, gap, levels=50, cmap="coolwarm")
+            # ax_gap.set_title("Initial gap")
+            # ax_gap.set_xlabel("x")
+            # ax_gap.set_ylabel("y")
+            # ax_gap.set_aspect("equal")
+            # fig_gap.colorbar(contour, ax=ax_gap, label="gap")
+            # plt.tight_layout()
+            # plt.show()
+            # EO Plot the initial gap for debugging
+
             # Solve the problem
             start = time.time()
-            # pfactor = 1. # for conical indenter
             if frame == 0:
                 p_trial_nodes = pfactor * np.maximum(-gap, 0)
                 p_trial_facet = facet_projection @ p_trial_nodes
                 p_trial_facet = np.maximum(p_trial_facet, 0)
-                pressure, displacement, error_history = constrained_CG(
-                    K,
-                    error_type,
-                    nodal_coords,
-                    nodal_dofs,
-                    gap,
-                    max_iter,
-                    tolerance,
-                    initial_pressure=p_trial_facet,
-                    projection_matrix=facet_projection
+                print("p_trial_facet in ", np.min(p_trial_facet), np.max(p_trial_facet))
+                # Try scipy solver
+                from py_solvers import as_nnls_stable
+                pressure, g, info = as_nnls_stable(
+                    K, gap, node_of_elem_idx,
+                    use_minus=True,
+                    max_outer=20,
+                    tau_add=None, tau_rem=None,  # auto-scaled
+                    ptol=0.0,                    # auto absolute
+                    hold_iters=3,
+                    lam=0.0, lam_bump=1e-6,
+                    cont_every=3, cont_factor=0.5,
+                    verbose=True
                 )
-            else:
-                pressure, displacement, error_history = constrained_CG(
-                    K,
-                    error_type,
-                    nodal_coords,
-                    nodal_dofs,
-                    gap,
-                    max_iter,
-                    tolerance,
-                    initial_pressure=pressure,
-                    projection_matrix=facet_projection
-                )
-            print("Iters: {0:3d}, Error {1:.3e}".format(len(error_history), error_history[-1,1]))
+                displacement = (g - gap)
+                print("iters:", info['iters'])
 
+                # pressure, displacement, info = constrained_CG(
+                #     K,
+                #     gap,
+                #     tolerance,
+                #     p_trial_facet,
+                #     node_of_elem_idx,
+                #     max_iter
+                # )
+                # print(info)
+            else:   
+                pressure, displacement, info = constrained_CG(
+                    K,
+                    gap,
+                    tolerance,
+                    pressure,
+                    node_of_elem_idx,
+                    max_iter
+                )
+                print(info)
+            # print("Iters: {0:3d}, Error {1:.3e}".format(len(error_history), error_history[-1,1]))
+
+            print("displacement in ", np.min(displacement), np.max(displacement))
+            print("pressure in ", np.min(pressure), np.max(pressure))
     ## Plot using Matplotlib
 
             # Set viewing angles
@@ -287,7 +352,7 @@ def main():
 
             ax[0].set_xlim([-0.,1.])
             ax[0].set_ylim([-0.,1.])
-            ax[0].set_zlim([-displ,0])
+            # ax[0].set_zlim([-displ,0])
             x = np.linspace(-0.,1.,100)
             y = np.linspace(-0.,1.,100)
             X,Y = np.meshgrid(x,y)
@@ -295,16 +360,16 @@ def main():
             # Z = conical_indenter(X,Y, contact_center[0], contact_center[1], Rindenter, coords[0,2]-displ) - coords[0,2]
             Z = flat_indenter(X,Y, contact_center[0], contact_center[1], Rindenter, nodal_coords[0,2]-displ) - nodal_coords[0,2]
             Z[Z>0.] = np.nan
-            surf1 = ax[0].plot_trisurf(nodal_coords[:,0], nodal_coords[:,1], -displacement, triangles=tri_nodal.triangles, cmap='coolwarm', vmin = -displ, vmax = 0)
+            surf1 = ax[0].plot_trisurf(nodal_coords[:,0], nodal_coords[:,1], -displacement, triangles=tri_nodal.triangles, cmap='coolwarm') #, vmin = -displ, vmax = 0)
             cb1 = fig.colorbar(surf1, ax=ax[0], shrink=0.6, aspect=10, orientation='horizontal')
             cb1.set_label("$u_z$")
-            ax[0].plot_surface(X,Y,Z, alpha=0.1, cmap='gray',  rcount = X.shape[0], ccount = X.shape[1], edgecolor='k', linewidth=0.1)
+            # ax[0].plot_surface(X,Y,Z, alpha=0.1, cmap='gray',  rcount = X.shape[0], ccount = X.shape[1], edgecolor='k', linewidth=0.1)
             ax[0].set_title("Vertical displacement")
 
             ax[1].set_xlim([0,1])
             ax[1].set_ylim([0,1])
             # ax[1].set_zlim([0,16])
-            surf2 = ax[1].plot_trisurf(facet_centers[:,0], facet_centers[:,1], pressure, triangles=tri_facet.triangles, cmap='coolwarm', vmin = 0, vmax = 1.5e6)
+            surf2 = ax[1].plot_trisurf(facet_centers[:,0], facet_centers[:,1], pressure, triangles=tri_facet.triangles, cmap='coolwarm') #, vmin = 0, vmax = 1.5e6)
             cb2 = fig.colorbar(surf2, ax=ax[1], shrink=0.6, aspect=10, orientation='horizontal')
             cb2.set_label("$p/E$")
             ax[1].set_title("Pressure/Young's modulus")

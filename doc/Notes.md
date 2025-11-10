@@ -45,3 +45,57 @@ $$
 [K]_{N_{\text{DOF}} \times N_{\text{DOF}}} [X]_{N_{\text{DOF}} \times m} = \frac{1}{p_0}[F]_{N_{\text{DOF}} \times m},
 $$
 we obtain directly a matrix $[X]$ whose entries at surface nodes can be easily extracted to obtain $[S_c]_{n \times m}$ matrix.
+
+## Linear Complementarity Problem
+
+Since the displacement resulting from pressures $p$ is given by:
+$$
+u = S_c p
+$$
+then the gap $g$ change compared to its initial value is given by:
+$$
+g = u + g_0 = S_c p + g_0.
+$$
+The Linear Complementarity Problem (LCP) can be formulated as:
+$$
+g  = S_c p + g_0
+$$
+$$
+g \ge 0, \quad p \ge 0, \quad g \perp p,
+$$
+the last condition, called complementarity condition is not easy to verify when $g$ and $p$ are defined on different spaces, i.e. we cannot simply set $p^\top q = 0$.
+
+The associated quadratic programming problem, for the same space for $p$ and $g$ can be defined as
+$$
+\text{minimize } \mathcal F(p) = \frac 12 p^\top S_c p + p^\top g_0
+$$
+$$
+\text{subject to } p \ge 0
+$$
+Again, the last term of the functional cannot be readily evaluated if $p$ and $g,g_0$ are defined on different spaces.
+
+However, instead of handling the problem 
+$$
+g  = S_c p + g_0
+$$
+we can transform it into
+$$
+S_c^\top g = S_c^\top S_c p + S_c^\top g_0,
+$$
+then by denoting 
+$$
+g' = S_c^\top g, \quad g_0' = S_c^\top g_0,\quad H = S_c^\top S_c,
+$$
+we get the system
+$$
+g' = Hp + g_0',
+$$
+which would result in the quadratic problem:
+$$
+\text{minimize } \mathcal F(p) = \frac 12 p^\top H p + p^\top g'_0
+$$
+$$
+\text{subject to } p \ge 0
+$$
+
+

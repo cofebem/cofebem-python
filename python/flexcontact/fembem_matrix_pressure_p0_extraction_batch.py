@@ -36,7 +36,7 @@ from ufl import dx, ds, grad, inner, sym, Measure
 output_directory = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "out_elasticity")
 )
-N = 11
+N = 21
 
 @jit(nopython=True, parallel=True)
 def get_deflection(uh, boundary_dofs, force):
@@ -58,7 +58,7 @@ msh = create_box(
 )
 
 # Define the elasticity parameters
-E = 1.0e9
+E = 1.0e6
 nu = 0.3
 mu = E / (2.0 * (1.0 + nu))
 Es = E/(1-nu**2)
