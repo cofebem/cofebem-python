@@ -251,7 +251,7 @@ print(Sc_sampling.shape)
 #  Sc by Collocation BEM
 # -------------------------------------------------------------------------------------------------------
 
-from cofebem.bem.fundamental_solutions import kelvin_G, kelvin_H
+from cofebem.bem.kernels import kelvin_G, kelvin_H
 from cofebem.bem.integrate import integrate
 
 inv = np.linalg.inv

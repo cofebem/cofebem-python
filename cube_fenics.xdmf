@@ -10,15 +10,6 @@
         <DataItem Dimensions="812 3" Format="HDF">cube_fenics.h5:/Mesh/mesh/geometry</DataItem>
       </Geometry>
     </Grid>
-    <Grid Name="mesh_tags" GridType="Uniform">
-      <xi:include xpointer="xpointer(/Xdmf/Domain/Grid/Geometry)" />
-      <Topology TopologyType="Triangle" NumberOfElements="189" NodesPerElement="3">
-        <DataItem Dimensions="189 3" NumberType="Int" Format="HDF">cube_fenics.h5:/MeshTags/mesh_tags/topology</DataItem>
-      </Topology>
-      <Attribute Name="mesh_tags" AttributeType="Scalar" Center="Cell">
-        <DataItem Dimensions="189 1" Format="HDF">cube_fenics.h5:/MeshTags/mesh_tags/Values</DataItem>
-      </Attribute>
-    </Grid>
     <Grid Name="u" GridType="Collection" CollectionType="Temporal">
       <Grid Name="u" GridType="Uniform">
         <xi:include xpointer="xpointer(/Xdmf/Domain/Grid[@GridType='Uniform'][1]/*[self::Topology or self::Geometry])" />

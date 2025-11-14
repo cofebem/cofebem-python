@@ -172,56 +172,118 @@ if __name__ == "__main__":
     #     xdmf.write_mesh(msh)
     #     xdmf.write_function(normal_fn)
 
-    import numpy as np
+    # import numpy as np
 
-    def z(t):
-        return (1 - t) * 1j * np.pi
+    # def z(t):
+    #     return (1 - t) * 1j * np.pi
 
-    def dz_dt(t):
-        return -1j * np.pi
+    # def dz_dt(t):
+    #     return -1j * np.pi
 
-    def f(z):
-        return np.exp(-z)
+    # def f(z):
+    #     return np.exp(-z)
 
-    a, b = 0, 1
-    N = 1000  # number of subdivisions
-    ts = np.linspace(a, b, N)
+    # a, b = 0, 1
+    # N = 1000  # number of subdivisions
+    # ts = np.linspace(a, b, N)
 
-    integrand = f(z(ts)) * dz_dt(ts)
+    # integrand = f(z(ts)) * dz_dt(ts)
 
-    integral = np.trapz(integrand, ts)
+    # integral = np.trapz(integrand, ts)
 
-    print("Numerical contour integral:", np.real(integral))
+    # print("Numerical contour integral:", np.real(integral))
 
-    from mpi4py import MPI
-    import dolfinx
+    # from mpi4py import MPI
+    # import dolfinx
 
-    mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 10, 10)
-    mesh.name = "InitialMesh"
-    element_type = "Lagrange"
-    element_degree = 1
+    # mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 10, 10)
+    # mesh.name = "InitialMesh"
+    # element_type = "Lagrange"
+    # element_degree = 1
 
-    V = dolfinx.fem.functionspace(
-        mesh, (element_type, element_degree, (mesh.geometry.dim,))
-    )
-    u = dolfinx.fem.Function(V)
-    # u.interpolate(lambda x: x[0] * x[1])
-    u.name = "f"
+    # V = dolfinx.fem.functionspace(
+    #     mesh, (element_type, element_degree, (mesh.geometry.dim,))
+    # )
+    # u = dolfinx.fem.Function(V)
+    # # u.interpolate(lambda x: x[0] * x[1])
+    # u.name = "f"
 
-    xdmf = dolfinx.io.XDMFFile(MPI.COMM_WORLD, "functions.xdmf", "w")
-    xdmf.write_mesh(mesh)
-    xdmf.write_function(u, mesh_xpath=f"/Xdmf/Domain/Grid[@Name='{mesh.name}']")
+    # xdmf = dolfinx.io.XDMFFile(MPI.COMM_WORLD, "functions.xdmf", "w")
+    # xdmf.write_mesh(mesh)
+    # xdmf.write_function(u, mesh_xpath=f"/Xdmf/Domain/Grid[@Name='{mesh.name}']")
 
-    mesh.topology.create_connectivity(1, 2)
-    r_mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 15, 15)
-    r_mesh.name = "Refined"
-    Vr = dolfinx.fem.functionspace(
-        r_mesh, (element_type, element_degree, (mesh.geometry.dim,))
-    )
-    ur = dolfinx.fem.Function(Vr)
-    # ur.interpolate(lambda x: x[0] * x[1])
-    ur.name = "f"
+    # mesh.topology.create_connectivity(1, 2)
+    # r_mesh = dolfinx.mesh.create_unit_square(MPI.COMM_WORLD, 15, 15)
+    # r_mesh.name = "Refined"
+    # Vr = dolfinx.fem.functionspace(
+    #     r_mesh, (element_type, element_degree, (mesh.geometry.dim,))
+    # )
+    # ur = dolfinx.fem.Function(Vr)
+    # # ur.interpolate(lambda x: x[0] * x[1])
+    # ur.name = "f"
 
-    xdmf.write_mesh(r_mesh)
-    xdmf.write_function(ur, t=1, mesh_xpath=f"/Xdmf/Domain/Grid[@Name='{r_mesh.name}']")
-    xdmf.close()
+    # xdmf.write_mesh(r_mesh)
+    # xdmf.write_function(ur, t=1, mesh_xpath=f"/Xdmf/Domain/Grid[@Name='{r_mesh.name}']")
+    # xdmf.close()
+
+    # import numpy as np
+    # import matplotlib.pyplot as plt
+
+    # u = np.linspace(0, 1, 16)
+    # v = np.linspace(0, 1, 16)
+    # U, V = np.meshgrid(u, v)
+
+    # Xi1 = U * (1 - V)
+    # Xi2 = U * V
+    # fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    # plt.subplots_adjust(wspace=0.25)
+
+    # # ===== Left: Unit square (u,v) =====
+    # ax = axes[0]
+    # for i in range(len(v)):
+    #     ax.plot(u, v[i] * np.ones_like(u), color="gray", lw=0.5)
+    # for j in range(len(u)):
+    #     ax.plot(u[j] * np.ones_like(v), v, color="gray", lw=0.5)
+
+    # ax.scatter(U, V, color="black", s=8)
+    # ax.set_title("Unit Square $(u,v)$")
+    # ax.set_xlabel("$u$")
+    # ax.set_ylabel("$v$")
+    # ax.set_xlim(-0.02, 1.02)
+    # ax.set_ylim(-0.02, 1.02)
+    # ax.set_aspect("equal")
+
+    # ax = axes[1]
+    # for i in range(len(v)):
+    #     ax.plot(Xi1[i, :], Xi2[i, :], color="RoyalBlue", lw=0.7, alpha=0.7)
+    # for j in range(len(u)):
+    #     ax.plot(Xi1[:, j], Xi2[:, j], color="RoyalBlue", lw=0.7, alpha=0.7)
+
+    # # Triangle boundary
+    # triangle = np.array([[0, 0], [1, 0], [0, 1], [0, 0]])
+    # ax.plot(triangle[:, 0], triangle[:, 1], "k-", lw=1.2)
+    # ax.scatter(Xi1, Xi2, color="RoyalBlue", s=8)
+
+    # ax.set_title(r"Mapped Triangle $(\xi_1,\xi_2)=(u(1-v), u v)$")
+    # ax.set_xlabel(r"$\xi_1$")
+    # ax.set_ylabel(r"$\xi_2$")
+    # ax.set_xlim(-0.02, 1.02)
+    # ax.set_ylim(-0.02, 1.02)
+    # ax.set_aspect("equal")
+
+    # plt.tight_layout()
+    # # plt.savefig("figures/duffy_mapping_points.png", dpi=300)
+    # plt.show()
+    from cofebem.mesh.hollow_cylinder import hollow_cylinder
+
+    # -------------------------------------------------------------------------------------------------------
+    #  Mesh and material parameters
+    # -------------------------------------------------------------------------------------------------------
+    nr = 30
+    nt = 200
+    nz = 1
+
+    r_inner = 1
+    r_outer = 5
+
+    hollow_cylinder(nr, nt, nz, r_inner, r_outer)

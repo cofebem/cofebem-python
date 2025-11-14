@@ -10,7 +10,6 @@ from cofebem.hmatrices.hmatrix import HMatrix
 
 
 def MatVec(A: np.ndarray, x: np.ndarray) -> np.ndarray:
-    """Handmade dense matvec with Python loops: O(mn) and slow on purpose."""
     m, n = A.shape
 
     if x.ndim == 2:
@@ -261,9 +260,9 @@ if __name__ == "__main__":
     Y = pts[None, :, :]
     A_full = 1.0 / (np.linalg.norm(X - Y, axis=2) + 1e-8)
 
-    leaf_grid = [8, 16, 32, 64]
-    eta_grid = [0.5, 0.7, 1.0, 1.5]
-    repeats = 5
+    leaf_grid = [8, 32, 64, 128]
+    eta_grid = [0.5, 1.0, 1.5, 2.0]
+    repeats = 3
     tol = 1e-6
     split = "pca"  # try "kd" as well
 
