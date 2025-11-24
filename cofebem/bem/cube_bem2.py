@@ -505,6 +505,54 @@ def guiggiani_H_triangle(
     return I_1D + I_2D
 
 
+def integrate_G_const(
+    kernel, xc, elem, normal, reg, xi_eta_star=None, sing_corner=None
+):
+    """
+    Integrate kernel(xc, y, normal, ...) over a single triangle with
+    a P0 (constant) basis function, i.e. N_t ≡ 1 on the element.
+
+    Returns a 3x3 matrix for one (collocation, element) pair.
+    """
+    out = np.zeros((3, 3))
+
+    match reg:
+        case "reg":
+            for (xi1, xi2), w in zip(quad_pts, quad_wts):
+                y = map_to_physical_3d(elem, xi1, xi2)
+                J_geo = jacobian_determinant_3d(elem, xi1, xi2)
+                out += kernel(xc, y, normal, mu, nu) * (w * J_geo)
+
+        case "near_sing":
+            xi_star, eta_star = xi_eta_star
+            xi_star = min(xi_star, 1.0 - 1e-12)
+            u_star = float(np.clip(xi_star, 0.0, 1.0))
+            v_star = float(np.clip(eta_star / max(1e-12, (1.0 - xi_star)), 0.0, 1.0))
+
+            for t, wt in zip(t_1d, w_1d):
+                u, du_dt = telles01(u_star, t)
+                for s, ws in zip(t_1d, w_1d):
+                    v, dv_ds = telles01(v_star, s)
+                    xi, eta = u, (1.0 - u) * v
+                    J_geo = jacobian_determinant_3d(elem, xi, eta)
+                    J_map = (1.0 - u) * du_dt * dv_ds
+                    y = map_to_physical_3d(elem, xi, eta)
+                    out += kernel(xc, y, normal, mu, nu) * (wt * ws * J_map * J_geo)
+
+        case "sing":
+            assert sing_corner in (0, 1, 2), "sing_corner must be 0,1,or 2"
+
+            for rho, wr in zip(t_1d, w_1d):
+                for tau, wt in zip(t_1d, w_1d):
+                    xi, eta, J_duffy = duffy_map_corner(sing_corner, rho, tau)
+                    y = map_to_physical_3d(elem, xi, eta)
+                    J_geo = jacobian_determinant_3d(elem, xi, eta)
+                    w_total = wr * wt * J_duffy * J_geo
+                    out += kernel(xc, y, normal, mu, nu) * w_total
+
+    return out
+
+
 def integrate(
     kernel, xc, elem, normal, loc_idx, reg, xi_eta_star=None, sing_corner=None
 ):
@@ -608,7 +656,7 @@ for e, tri in enumerate(boundary_cells_conn):
     lc = np.linalg.norm(p1 - p3)
     elem_h[e] = (la + lb + lc) / 3.0
 
-NEAR_FACTOR = 0.0030
+NEAR_FACTOR = 0.5
 near_thresh = NEAR_FACTOR * elem_h
 
 n_collocs = len(boundary_points)
@@ -644,426 +692,250 @@ for i, x in enumerate(boundary_points):
     else:
         c_vals[i] = 0.5
 
-# print(
-#     "c counts:",
-#     "faces",
-#     int(np.sum(np.isclose(c_vals, 0.5))),
-#     len(regs),
-#     "edges",
-#     int(np.sum(np.isclose(c_vals, 0.25))),
-#     len(edges),
-#     "corners",
-#     int(np.sum(np.isclose(c_vals, 0.125))),
-#     len(corners),
-# )
-
-
-# print("c range:", c_vals.min(), c_vals.max())
-
-
-# ================== FREE-TERM NUMERICAL CHECK ==================
-
-
-def guiggiani_H_triangle_constN(
-    xc, elem, normal, sing_corner, mu, nu, n_theta=16, n_rho=16
-):
-    E = reorder_triangle_for_corner(elem, sing_corner)
-    a, b, J_geo, _ = triangle_edge_vectors(E)
-    n = normal / np.linalg.norm(normal)
-
-    I3 = np.eye(3)
-    one_m_2nu = 1.0 - 2.0 * nu
-    factor = -1.0 / (8.0 * np.pi * (1.0 - nu))
-
-    thetas, wtheta = gl_interval(n_theta, 0.0, 0.5 * np.pi)
-    C = np.zeros((3, 3))
-    tiny = 1e-14
-
-    for th, wth in zip(thetas, wtheta):
-        c, s = np.cos(th), np.sin(th)
-        denom = c + s
-        if denom < tiny:
-            continue
-
-        A_val, Av = A_theta(a, b, th)
-        if A_val < 1e-15:
-            continue
-
-        rhat = Av / A_val
-        n_dot_Av = float(np.dot(n, Av))
-        # leading angular tensor f_theta
-        term_leading = n_dot_Av * (
-            one_m_2nu * I3 + 3.0 * np.outer(rhat, rhat)
-        ) - one_m_2nu * (np.outer(Av, n) - np.outer(n, Av))
-        f_theta = factor * (J_geo / (A_val**3)) * term_leading  # 3x3
-
-        rho_max = 1.0 / (denom)
-
-        # 1D analytic contribution (log term)
-        C += f_theta * np.log(max(tiny, rho_max * A_val)) * wth
-
-        # 2D regular remainder
-        rhos, wrho = gl_interval(n_rho, 0.0, rho_max)
-        accum_rho = np.zeros((3, 3))
-        for rho, wr in zip(rhos, wrho):
-            if rho < tiny:
-                continue
-            xi, eta = rho * c, rho * s
-            y = map_to_physical_3d(E, xi, eta)
-            Hmat = kelvin_H(xc, y, n, mu, nu)  # 3x3
-            # N ≡ 1 here, Jacobian ~ J_geo * rho in polar collapse
-            F = Hmat * (J_geo * rho)
-            accum_rho += (F - (f_theta / rho)) * wr
-
-        C += accum_rho * wth
-
-    return C
-
-
-def free_term_matrix_at_point(i):
-    xc = boundary_points[i]
-    C = np.zeros((3, 3))
-
-    for e, elem_conn in enumerate(boundary_cells_conn):
-        elem = elem_nodes[e]
-        normal = elem_normals[e]
-
-        if i in elem_conn:
-            sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1,2
-            C += guiggiani_H_triangle_constN(
-                xc, elem, normal, sing_corner, mu, nu, n_theta=20, n_rho=20
-            )
-        else:
-            # regular element: standard Dunavant quadrature
-            for (xi1, xi2), w in zip(quad_pts, quad_wts):
-                y = map_to_physical_3d(elem, xi1, xi2)
-                J_geo = jacobian_determinant_3d(elem, xi1, xi2)
-                C += kelvin_H(xc, y, normal, mu, nu) * (w * J_geo)
-
-    return -C
-
-
-test_indices = [regs[0], edges[0], corners[0]]
-test_labels = ["face", "edge", "corner"]
-vals = []
-j = 0
-print("\nChecking free-term c at selected collocation points:")
-for i in test_indices:
-    C = free_term_matrix_at_point(i)
-    c_i = np.trace(C) / 3.0
-    anis = np.linalg.norm(C - c_i * np.eye(3)) / np.linalg.norm(np.eye(3))
-    vals.append(c_i)
-    print(f"  i={i:6d}: {test_labels[j]}  c_i ≈ {c_i:.6f}   isotropy error={anis:.2e}")
-    j += 1
-
 
 #################################################################################################
 
+# G = np.zeros((tdim * n_collocs, tdim * nElem))
+# H = np.zeros((tdim * n_collocs, tdim * n_collocs))
 
-G = np.zeros((tdim * n_collocs, tdim * n_collocs))
-H = np.zeros((tdim * n_collocs, tdim * n_collocs))
+# for i, xc in tqdm(
+#     enumerate(boundary_points),
+#     total=n_collocs,
+#     desc="Assembling global matrices (P0 traction / P1 disp)",
+# ):
 
-for i, xc in tqdm(
-    enumerate(boundary_points),
-    total=n_collocs,
-    desc="Assembling global matrices",
-):
+#     for e, elem_conn in enumerate(boundary_cells_conn):
+#         elem = elem_nodes[e]
+#         normal = elem_normals[e]
 
-    for e, elem_conn in enumerate(boundary_cells_conn):
-        elem = elem_nodes[e]
-        normal = elem_normals[e]
+#         q, (lam1, lam2, lam3), dist = closest_point_on_triangle(
+#             xc, elem[0], elem[1], elem[2]
+#         )
+#         xi_star, eta_star = lam2, lam3
 
-        q, (lam1, lam2, lam3), dist = closest_point_on_triangle(
-            xc, elem[0], elem[1], elem[2]
-        )
-        xi_star, eta_star = lam2, lam3
+#         on_element = i in elem_conn
+#         near_sing = (not on_element) and (dist < near_thresh[e])
 
-        on_element = i in elem_conn
-        near_sing = (not on_element) and (dist < near_thresh[e])
+#         if on_element:
+#             sing_corner = int(np.where(elem_conn == i)[0][0])
+#         else:
+#             sing_corner = None
 
-        if on_element:
-            sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1, or 2
-        else:
-            sing_corner = None
+#         if on_element:
+#             reg_flag_G, xi_eta_G = "sing", None
+#         elif near_sing:
+#             reg_flag_G, xi_eta_G = "near_sing", (xi_star, eta_star)
+#         else:
+#             reg_flag_G, xi_eta_G = "reg", None
 
-        for loc_idx, j in enumerate(elem_conn):
-            if on_element:
-                reg_flag, xi_eta_star = "sing", None
-            elif near_sing:
-                reg_flag, xi_eta_star = "near_sing", (xi_star, eta_star)
-            else:
-                reg_flag, xi_eta_star = "reg", None
+#         Ge = integrate_G_const(
+#             kelvin_G,
+#             xc,
+#             elem,
+#             normal,
+#             reg_flag_G,
+#             xi_eta_star=xi_eta_G,
+#             sing_corner=sing_corner,
+#         )
 
-            Gij = integrate(
-                kelvin_G, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
-            )
-            Hij = integrate(
-                kelvin_H, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
-            )
+#         G[tdim * i : tdim * (i + 1), tdim * e : tdim * (e + 1)] += Ge
 
-            G[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Gij
-            H[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Hij
+#         for loc_idx, j in enumerate(elem_conn):
+#             if on_element:
+#                 reg_flag_H, xi_eta_H = "sing", None
+#             elif near_sing:
+#                 reg_flag_H, xi_eta_H = "near_sing", (xi_star, eta_star)
+#             else:
+#                 reg_flag_H, xi_eta_H = "reg", None
 
-    H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(tdim)
+#             Hij = integrate(
+#                 kelvin_H,
+#                 xc,
+#                 elem,
+#                 normal,
+#                 loc_idx,
+#                 reg_flag_H,
+#                 xi_eta_H,
+#                 sing_corner,
+#             )
+
+#             H[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Hij
+
+#     H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(tdim)
 
 
-print("Global Matrices G and H assembled")
+# print("Global Matrices G and H assembled")
 
-np.savez(
-    "GH_cube.npz",
-    G=G,
-    H=H,
-)
+# np.savez(
+#     "GH_cube_P0P1.npz",
+#     G=G,
+#     H=H,
+# )
 
 # -------------------- Mixed BCs: Dirichlet on z=0, Neumann on a patch at (0.5,0.5,1) --------------------
 
-data = np.load("GH_cube.npz")
+data = np.load("GH_cube_P0P1.npz")
 
 G, H = data["G"], data["H"]
 
 
-def nodes2dofs(nodes):
-    dofs = np.zeros(tdim * len(nodes), dtype=np.int64)
-    for i, node in enumerate(nodes):
-        dofs[tdim * i : tdim * (i + 1)] = tdim * node + np.arange(3)
+#############################################################################################
+# -------------------- Component-wise mixed BCs (P1 disp, P0 tractions) --------------------
+#############################################################################################
+# Dirichlet: ux = 0 on x=0 plane
+#            uy = 0 on y=0 plane
+#            uz = 0 on z=0 plane
+# Neumann:   tz = -1e8 on z = 1  (all other tractions = 0)
+#############################################################################################
 
-    return dofs
-
-
-N = n_collocs
-dofs = 3 * N
-pts = boundary_points
-
-tol = 1.0e-8
-
-# Iu = np.where(np.abs(pts[:, 2] - 0.0) <= tol)[0]
-# It = np.setdiff1d(np.arange(N), Iu)
-
-# Iu_ = nodes2dofs(Iu)
-# It_ = nodes2dofs(It)
-
-# u_u = np.zeros(len(Iu_))
-# t_t = np.zeros(len(It_))
-
-# R = 0.3
-# Xc = Yc = 0.5
-
-# mask = (((pts[:, 0] - Xc) ** 2 + (pts[:, 1] - Yc) ** 2) <= R**2) & np.isclose(
-#     pts[:, 2], 1, atol=tol
-# )
-# If = np.where(mask)[0]
-# print(len(If))
-# value = np.array([0.0, 0.0, -1.0e9], dtype=float)
-
-# for k, node in enumerate(It):
-#     if node in If:
-#         t_t[tdim * k : tdim * (k + 1)] = value
-
-
-# H_uu = H[np.ix_(Iu_, Iu_)]
-# H_ut = H[np.ix_(Iu_, It_)]
-# H_tu = H[np.ix_(It_, Iu_)]
-# H_tt = H[np.ix_(It_, It_)]
-
-
-# G_uu = G[np.ix_(Iu_, Iu_)]
-# G_ut = G[np.ix_(Iu_, It_)]
-# G_tu = G[np.ix_(It_, Iu_)]
-# G_tt = G[np.ix_(It_, It_)]
-
-# A = np.block(
-#     [
-#         [H_ut, -G_uu],
-#         [H_tt, -G_tu],
-#     ]
-# )
-
-
-# b = np.concatenate([-H_uu @ u_u + G_ut @ t_t, -H_tu @ u_u + G_tt @ t_t])
-
-# x = np.linalg.solve(A, b)
-
-# u_t = x[: len(It_)]
-# t_u = x[len(It_) :]
-
-# u_nodes = np.zeros(tdim * N, dtype=float)
-# t_nodes = np.zeros(tdim * N, dtype=float)
-
-# u_nodes[Iu_] = u_u
-# u_nodes[It_] = u_t
-
-# t_nodes[It_] = t_t
-# t_nodes[Iu_] = t_u
-
-# U = u_nodes.reshape((N, tdim))
-# T = t_nodes.reshape((N, tdim))
-
-# # -------------------- Write boundary VTK with results and BC tags --------------------
-# bc_flag = np.zeros(N, dtype=np.int32)  # 0: free, 1: Dirichlet, 2: Neumann-patch
-# bc_flag[Iu] = 1
-# bc_flag[If] = 2
-
-
-# np.savez(
-#     "u_cube.npz",
-#     u=U,
-#     t=T,
-#     bc_flag=bc_flag,
-# )
-# boundary_mesh.point_data["u"] = U
-# boundary_mesh.point_data["t"] = T
-# boundary_mesh.point_data["bc_flag"] = bc_flag
-
-# meshio.write("cube_bem.vtu", boundary_mesh)
-# print("Wrote cube_bem.vtu")
-
-# -------------------- Component-wise mixed BCs --------------------
-# Dirichlet:  ux = 0 on x=0 plane
-#             uy = 0 on y=0 plane
-#             uz = 0 on z=0 plane
-# Neumann:    tz = -1 on z = 1
-
-
-def nodes2dofs_for_comp(nodes, comp):  # comp: 0=x, 1=y, 2=z
-    nodes = np.asarray(nodes, dtype=np.int64).ravel()
-    return 3 * nodes + int(comp)
-
-
-N = n_collocs
 tdim = 3
-all_dofs = np.arange(tdim * N, dtype=np.int64)
+N_nodes = n_collocs
+N_elems = nElem
 pts = boundary_points
 tol = 1e-9
 
-# plane selectors
+
+# Helpers
+def nodes2dofs_for_comp(nodes, comp):  # comp: 0=x, 1=y, 2=z
+    nodes = np.asarray(nodes, dtype=np.int64).ravel()
+    return tdim * nodes + int(comp)
+
+
+def elems2dofs_for_comp(elems, comp):  # P0 tractions: DOFs per element
+    elems = np.asarray(elems, dtype=np.int64).ravel()
+    return tdim * elems + int(comp)
+
+
+# --------------------------- Displacement DOFs (P1, nodal) -------------------------------
+n_u = tdim * N_nodes
+u_known_full = np.zeros(n_u, dtype=float)
+is_u_known = np.zeros(n_u, dtype=bool)
+
+# plane selectors for nodes
 on_x0 = np.isclose(pts[:, 0], 0.0, atol=tol)
 on_y0 = np.isclose(pts[:, 1], 0.0, atol=tol)
 on_z0 = np.isclose(pts[:, 2], 0.0, atol=tol)
 
-# Dirichlet DOFs (component-wise)
 Iux_nodes = np.where(on_x0)[0]
 Iuy_nodes = np.where(on_y0)[0]
 Iuz_nodes = np.where(on_z0)[0]
 
-Iu_x = nodes2dofs_for_comp(Iux_nodes, 0)  # fix ux on x=0
-Iu_y = nodes2dofs_for_comp(Iuy_nodes, 1)  # fix uy on y=0
-Iu_z = nodes2dofs_for_comp(Iuz_nodes, 2)  # fix uz on z=0
+Iu_x = nodes2dofs_for_comp(Iux_nodes, 0)  # ux on x=0
+Iu_y = nodes2dofs_for_comp(Iuy_nodes, 1)  # uy on y=0
+Iu_z = nodes2dofs_for_comp(Iuz_nodes, 2)  # uz on z=0
 
-Iu_ = np.unique(np.concatenate([Iu_x, Iu_y, Iu_z]))  # sorted, unique
-It_ = np.setdiff1d(all_dofs, Iu_)  # Neumann DOFs
+# all Dirichlet values are 0 here
+is_u_known[Iu_x] = True
+is_u_known[Iu_y] = True
+is_u_known[Iu_z] = True
 
-on_top = np.isclose(pts[:, 2], 1.0, atol=tol)
-top_nodes = np.where(on_top)[0]
-Iz_top = nodes2dofs_for_comp(top_nodes, 2)
+Iu_known = np.where(is_u_known)[0]
+Iu_unknown = np.where(~is_u_known)[0]
 
-Itz_top = np.intersect1d(It_, Iz_top, assume_unique=False)
-idx_in_It = np.searchsorted(It_, Itz_top)
+# --------------------------- Traction DOFs (P0, per element) ----------------------------
+n_t = tdim * N_elems
+t_known_full = np.zeros(n_t, dtype=float)
+is_t_unknown = np.zeros(n_t, dtype=bool)
 
-u_u = np.zeros(len(Iu_), dtype=float)
-t_t = np.zeros(len(It_), dtype=float)
+elem_centers = elem_nodes.mean(axis=1)  # shape (N_elems, 3)
 
-t_t[idx_in_It] = -1.0e8
+# plane selectors for elements (by centroid)
+on_x0_elem = np.isclose(elem_centers[:, 0], 0.0, atol=tol)
+on_y0_elem = np.isclose(elem_centers[:, 1], 0.0, atol=tol)
+on_z0_elem = np.isclose(elem_centers[:, 2], 0.0, atol=tol)
+on_z1_elem = np.isclose(elem_centers[:, 2], 1.0, atol=tol)  # top face
 
+elem_x0 = np.where(on_x0_elem)[0]
+elem_y0 = np.where(on_y0_elem)[0]
+elem_z0 = np.where(on_z0_elem)[0]
+elem_top = np.where(on_z1_elem)[0]
 
-H_uu = H[np.ix_(Iu_, Iu_)]
-H_ut = H[np.ix_(Iu_, It_)]
-H_tu = H[np.ix_(It_, Iu_)]
-H_tt = H[np.ix_(It_, It_)]
+# Unknown tractions (analogous to P1/P1 logic):
+#   tx unknown on x=0
+#   ty unknown on y=0
+#   tz unknown on z=0
+It_unknown_x = elems2dofs_for_comp(elem_x0, 0)
+It_unknown_y = elems2dofs_for_comp(elem_y0, 1)
+It_unknown_z = elems2dofs_for_comp(elem_z0, 2)
 
-G_uu = G[np.ix_(Iu_, Iu_)]
-G_ut = G[np.ix_(Iu_, It_)]
-G_tu = G[np.ix_(It_, Iu_)]
-G_tt = G[np.ix_(It_, It_)]
+It_unknown = np.unique(np.concatenate([It_unknown_x, It_unknown_y, It_unknown_z]))
+is_t_unknown[It_unknown] = True
 
-# Mixed system:
-# [ H_ut  -G_uu ] [ u_t ] = [ -H_uu u_u + G_ut t_t ]
-# [ H_tt  -G_tu ] [ t_u ]   [ -H_tu u_u + G_tt t_t ]
-A = np.block([[H_ut, -G_uu], [H_tt, -G_tu]])
-b = np.concatenate([-H_uu @ u_u + G_ut @ t_t, -H_tu @ u_u + G_tt @ t_t])
+It_known = np.where(~is_t_unknown)[0]  # Neumann DOFs
 
-x = np.linalg.solve(A, b)
-u_t = x[: len(It_)]
-t_u = x[len(It_) :]
+# Neumann tractions:
+# default = 0, EXCEPT tz = -1e8 on top (z=1)
+t_known_full[:] = 0.0
+tz_top_dofs = elems2dofs_for_comp(elem_top, 2)
+# make sure they are actually in the known set (they should be, since top is not Dirichlet)
+t_known_full[tz_top_dofs] = -1.0e8
 
-u_nodes = np.zeros(tdim * N, dtype=float)
-t_nodes = np.zeros(tdim * N, dtype=float)
+# --------------------------- Build global linear system -------------------------------
+# Equation: H u = G t
+# Decompose: u = u_known_full + u_unknown, t = t_known_full + t_unknown
+#
+# => H u_unknown - G t_unknown = G t_known_full - H u_known_full  =: rhs_full
+#
+# Unknown vector x = [u_unknown; t_unknown]
+# A = [ H[:, Iu_unknown]  ,  -G[:, It_unknown] ]
 
-u_nodes[Iu_] = u_u
-u_nodes[It_] = u_t
+rhs_full = G @ t_known_full - H @ u_known_full
 
-t_nodes[It_] = t_t
-t_nodes[Iu_] = t_u
+H_u = H[:, Iu_unknown]  # (3*N_nodes) × (#u_unknown)
+G_t = G[:, It_unknown]  # (3*N_nodes) × (#t_unknown)
+A = np.hstack([H_u, -G_t])  # (3*N_nodes) × (#u_unknown + #t_unknown)
 
-U = u_nodes.reshape((N, tdim))
-T = t_nodes.reshape((N, tdim))
+# Solve in least squares sense (rectangular system allowed)
+x, residuals, rank, svals = np.linalg.lstsq(A, rhs_full, rcond=None)
 
-# -------------------- Write boundary VTK with results and BC tags --------------------
-bc_mask = np.zeros(N, dtype=np.int32)
-bc_mask[Iux_nodes] = 0
-bc_mask[Iuy_nodes] = 0
-bc_mask[Iuz_nodes] = 0
+n_u_unknown = len(Iu_unknown)
+u_unknown = x[:n_u_unknown]
+t_unknown = x[n_u_unknown:]
 
-is_neumann_z_top = np.zeros(N, dtype=bool)
+# --------------------------- Reconstruct full DOF vectors -----------------------------
+u_dofs = np.zeros(n_u, dtype=float)
+t_dofs = np.zeros(n_t, dtype=float)
 
-is_neumann_z_top[np.unique(Itz_top // 3)] = True
-bc_mask[is_neumann_z_top] = 10
+u_dofs[Iu_known] = u_known_full[Iu_known]
+u_dofs[Iu_unknown] = u_unknown
 
-is_neumann_z = np.zeros(N, dtype=bool)
-is_neumann_z[np.unique((It_[It_ % 3 == 2] // 3))] = True
-bc_mask[is_neumann_z] = 5
+t_dofs[It_known] = t_known_full[It_known]
+t_dofs[It_unknown] = t_unknown
 
-# np.savez("u_cube.npz", u=U, t=T, bc_mask=bc_mask)
+U = u_dofs.reshape((N_nodes, tdim))  # nodal displacements (P1)
+T_elem = t_dofs.reshape((N_elems, tdim))  # element tractions (P0)
+
+# --------------------------- Map P0 tractions to nodes for visualization ---------------
+T_nodes = np.zeros((N_nodes, tdim), dtype=float)
+count = np.zeros(N_nodes, dtype=int)
+
+for e, conn in enumerate(boundary_cells_conn):
+    for node in conn:
+        T_nodes[node] += T_elem[e]
+        count[node] += 1
+
+nonzero = count > 0
+T_nodes[nonzero] /= count[nonzero][:, None]
+
+# --------------------------- BC mask per node -----------------------------------------
+bc_mask = np.zeros(N_nodes, dtype=np.int32)
+
+# Mark Dirichlet nodes
+bc_mask[Iux_nodes] = 1  # ux=0
+bc_mask[Iuy_nodes] = 1  # uy=0
+bc_mask[Iuz_nodes] = 1  # uz=0
+
+# Mark Neumann tz on top elements
+nodes_top_neumann = np.unique(boundary_cells_conn[elem_top].ravel())
+bc_mask[nodes_top_neumann] = 10
+
+# --------------------------- Write VTK -------------------------------------------------
 boundary_mesh.point_data["u"] = U
-boundary_mesh.point_data["t"] = T
+boundary_mesh.point_data["t_avg"] = T_nodes
+boundary_mesh.cell_data["t_p0"] = [T_elem]
 boundary_mesh.point_data["bc_mask"] = bc_mask
-meshio.write("cube2bem.vtu", boundary_mesh)
-print("Wrote cube2bem.vtu with component-wise BCs")
 
-
-##############################Construct S_c#############################################
-# inv = np.linalg.inv
-
-# Iu = np.where(np.abs(pts[:, 2] - 0.0) <= tol)[0]
-# Ic = np.where(np.abs(pts[:, 2] - 1.0) <= tol)[0]
-# It = np.setdiff1d(np.arange(N), np.concatenate((Iu, Ic)))
-
-# Iu_ = nodes2dofs(Iu)
-# Ic_ = nodes2dofs(Ic)
-# It_ = nodes2dofs(It)
-
-# H_ut = H[np.ix_(Iu_, It_)]
-# H_uc = H[np.ix_(Iu_, Ic_)]
-# H_tt = H[np.ix_(It_, It_)]
-# H_tc = H[np.ix_(It_, Ic_)]
-# H_ct = H[np.ix_(Ic_, It_)]
-# H_cc = H[np.ix_(Ic_, Ic_)]
-
-# G_uu = G[np.ix_(Iu_, Iu_)]
-# G_tu = G[np.ix_(It_, Iu_)]
-# G_cu = G[np.ix_(Ic_, Iu_)]
-
-# A = np.block(
-#     [
-#         [H_ut, H_uc, -G_uu],
-#         [H_tt, H_tc, -G_tu],
-#         [H_ct, H_cc, -G_cu],
-#     ]
-# )
-
-# G_uc = G[np.ix_(Iu_, Ic_)]
-# G_tc = G[np.ix_(It_, Ic_)]
-# G_cc = G[np.ix_(Ic_, Ic_)]
-
-# Sc = inv(
-#     (H_cc - G_cu @ inv(G_uu) @ H_uc)
-#     - (H_ct - G_cu @ inv(G_uu) @ H_ut)
-#     @ inv(H_tt - G_tu @ inv(G_uu) @ H_ut)
-#     @ (H_tc - G_tu @ inv(G_uu) @ H_uc)
-# ) @ (
-#     (G_cc - G_cu @ inv(G_uu) @ G_uc)
-#     - (H_ct - G_cu @ inv(G_uu) @ H_ut)
-#     @ inv(H_tt - G_tu @ inv(G_uu) @ H_ut)
-#     @ (G_tc - G_tu @ inv(G_uu) @ G_uc)
-# )
-
-# np.savez("Sc_BEM.npz", Sc=Sc)
+meshio.write("cube2bem_p0p1.vtu", boundary_mesh)
+print(
+    "Wrote cube2bem_p0p1.vtu with P0 tractions / P1 displacements and component-wise BCs"
+)
