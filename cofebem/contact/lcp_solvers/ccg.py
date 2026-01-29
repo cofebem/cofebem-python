@@ -26,10 +26,7 @@ class CCG:
         error_history = np.zeros((self.max_iter, 3))
 
         if self.p0 is not None:
-            # p = initial_pressure
-            # p[np.logical_and(gap<0, p == 0)] = pressure_factor * gap[np.logical_and(gap<0, p == 0)]
-            # p[gap>0] = 0
-            p = np.maximum(-self.g, 0) * self.pfactor
+            p = self.p0
         else:
             p = np.zeros_like(ub)
             p = np.maximum(-self.g, 0) * self.pfactor
@@ -145,4 +142,8 @@ class CCG:
             error_history[iter, 2] = ort
             if error < self.tol:
                 break
-        return p, self.Sc @ p, error_history[: iter + 1]
+        return (
+            p,
+            self.Sc @ p,
+            error_history[: iter + 1],
+        )

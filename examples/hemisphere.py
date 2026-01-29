@@ -1,7 +1,7 @@
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-
+import meshio
 from dolfinx.mesh import (
     locate_entities_boundary,
 )
@@ -42,8 +42,10 @@ from cofebem.mesh.hemisphere import hemisphere
 
 
 mesh, cell_tags, facet_tags = gmshio.read_from_msh(
-    "semisphere.msh", MPI.COMM_WORLD, 0, gdim=3
+    "./msh_files/hemisphere5.msh", MPI.COMM_WORLD, 0, gdim=3
 )
+
+print(facet_tags.values)
 
 # nr = 10
 # nt = 20
@@ -124,8 +126,16 @@ problem = LinearProblem(
     a=a(u, v), L=L(v), bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
 )
 
+###Contact Solving Setup######
+# from cofebem.fenics import Contact
+
+# contact = Contact(mesh1, mesh2, Gamma_c1, Gamma_c2, problem)
+# fc = contact.solve()
+
 problem.solve()
 
+# problem.A.assemble()
+# problem.b.assemble()
 
 # -------------------------------------------------------------------------------------------------------
 #  Gamma_c : Contact Region

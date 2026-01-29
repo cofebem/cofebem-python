@@ -1,4 +1,7 @@
-class BC:
+from abc import ABC, abstractmethod
+
+
+class BC(ABC):
     def __init__(self, value, marker, tag):
         self._value = value
         self.marker = marker

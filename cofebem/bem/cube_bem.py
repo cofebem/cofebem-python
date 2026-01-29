@@ -25,7 +25,7 @@ def mesh_dim(mesh):
     return max(dims)
 
 
-mesh = meshio.read("cube2bem.msh")
+mesh = meshio.read("./geo_files/cube_refined_edges1.msh")
 
 cell_type = (
     "triangle"
@@ -46,7 +46,7 @@ boundary_mesh = meshio.Mesh(
     points=boundary_points,
     cells=[(cell_type, boundary_cells_conn)],
 )
-meshio.write("cube_boundary.vtk", boundary_mesh)
+# meshio.write("cube_refined_edges.vtk", boundary_mesh)
 
 # ------------------------------------material parameters---------------------------------------------
 
@@ -760,64 +760,64 @@ for i in test_indices:
 #################################################################################################
 
 
-G = np.zeros((tdim * n_collocs, tdim * n_collocs))
-H = np.zeros((tdim * n_collocs, tdim * n_collocs))
+# G = np.zeros((tdim * n_collocs, tdim * n_collocs))
+# H = np.zeros((tdim * n_collocs, tdim * n_collocs))
 
-for i, xc in tqdm(
-    enumerate(boundary_points),
-    total=n_collocs,
-    desc="Assembling global matrices",
-):
+# for i, xc in tqdm(
+#     enumerate(boundary_points),
+#     total=n_collocs,
+#     desc="Assembling global matrices",
+# ):
 
-    for e, elem_conn in enumerate(boundary_cells_conn):
-        elem = elem_nodes[e]
-        normal = elem_normals[e]
+#     for e, elem_conn in enumerate(boundary_cells_conn):
+#         elem = elem_nodes[e]
+#         normal = elem_normals[e]
 
-        q, (lam1, lam2, lam3), dist = closest_point_on_triangle(
-            xc, elem[0], elem[1], elem[2]
-        )
-        xi_star, eta_star = lam2, lam3
+#         q, (lam1, lam2, lam3), dist = closest_point_on_triangle(
+#             xc, elem[0], elem[1], elem[2]
+#         )
+#         xi_star, eta_star = lam2, lam3
 
-        on_element = i in elem_conn
-        near_sing = (not on_element) and (dist < near_thresh[e])
+#         on_element = i in elem_conn
+#         near_sing = (not on_element) and (dist < near_thresh[e])
 
-        if on_element:
-            sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1, or 2
-        else:
-            sing_corner = None
+#         if on_element:
+#             sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1, or 2
+#         else:
+#             sing_corner = None
 
-        for loc_idx, j in enumerate(elem_conn):
-            if on_element:
-                reg_flag, xi_eta_star = "sing", None
-            elif near_sing:
-                reg_flag, xi_eta_star = "near_sing", (xi_star, eta_star)
-            else:
-                reg_flag, xi_eta_star = "reg", None
+#         for loc_idx, j in enumerate(elem_conn):
+#             if on_element:
+#                 reg_flag, xi_eta_star = "sing", None
+#             elif near_sing:
+#                 reg_flag, xi_eta_star = "near_sing", (xi_star, eta_star)
+#             else:
+#                 reg_flag, xi_eta_star = "reg", None
 
-            Gij = integrate(
-                kelvin_G, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
-            )
-            Hij = integrate(
-                kelvin_H, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
-            )
+#             Gij = integrate(
+#                 kelvin_G, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
+#             )
+#             Hij = integrate(
+#                 kelvin_H, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
+#             )
 
-            G[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Gij
-            H[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Hij
+#             G[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Gij
+#             H[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Hij
 
-    H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(tdim)
+#     H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(tdim)
 
 
-print("Global Matrices G and H assembled")
+# print("Global Matrices G and H assembled")
 
-np.savez(
-    "GH_cube.npz",
-    G=G,
-    H=H,
-)
+# np.savez(
+#     "GH_CubePatch_refined_edges1_P1P1.npz",
+#     G=G,
+#     H=H,
+# )
 
 # -------------------- Mixed BCs: Dirichlet on z=0, Neumann on a patch at (0.5,0.5,1) --------------------
 
-data = np.load("GH_cube.npz")
+data = np.load("GH_CubePatch_refined_edges1_P1P1.npz")
 
 G, H = data["G"], data["H"]
 
@@ -1016,9 +1016,63 @@ bc_mask[is_neumann_z] = 5
 boundary_mesh.point_data["u"] = U
 boundary_mesh.point_data["t"] = T
 boundary_mesh.point_data["bc_mask"] = bc_mask
-meshio.write("cube2bem.vtu", boundary_mesh)
-print("Wrote cube2bem.vtu with component-wise BCs")
+# meshio.write("CubePatch_refined_edges1_P1P1.vtu", boundary_mesh)
+# print("Wrote CubePatch_refined_edges1_P1P1.vtu")
 
+
+# -------------------- L2 relative error on entire boundary --------------------
+
+p0 = 1.0e8
+
+alpha = nu * p0 / E
+beta = -p0 / E
+
+U_bem = U
+X_bdry = pts
+
+U_exact_bdry = np.zeros_like(U_bem)
+U_exact_bdry[:, 0] = alpha * X_bdry[:, 0]
+U_exact_bdry[:, 1] = alpha * X_bdry[:, 1]
+U_exact_bdry[:, 2] = beta * X_bdry[:, 2]
+err_vec_all = U_bem - U_exact_bdry
+rel_L2_vec_all = np.linalg.norm(err_vec_all.ravel()) / np.linalg.norm(
+    U_exact_bdry.ravel()
+)
+
+err_z_all = U_bem[:, 2] - U_exact_bdry[:, 2]
+rel_L2_z_all = np.linalg.norm(err_z_all) / np.linalg.norm(U_exact_bdry[:, 2])
+
+print(
+    f"L2 relative error on entire boundary (vector displacement) = {rel_L2_vec_all:.3e}"
+)
+print(
+    f"L2 relative error on entire boundary (u_z component)       = {rel_L2_z_all:.3e}"
+)
+
+
+# -------------------- L2 relative error on top surface --------------------
+# p0 = 1.0e8
+
+# alpha = nu * p0 / E
+# beta = -p0 / E
+
+
+# U_top = U[top_nodes, :]
+# X_top = pts[top_nodes, :]
+
+# U_exact_top = np.zeros_like(U_top)
+# U_exact_top[:, 0] = alpha * X_top[:, 0]
+# U_exact_top[:, 1] = alpha * X_top[:, 1]
+# U_exact_top[:, 2] = beta * X_top[:, 2]
+
+# err_vec = U_top - U_exact_top
+# rel_L2_vec = np.linalg.norm(err_vec.ravel()) / np.linalg.norm(U_exact_top.ravel())
+
+# err_z = U_top[:, 2] - U_exact_top[:, 2]
+# rel_L2_z = np.linalg.norm(err_z) / np.linalg.norm(U_exact_top[:, 2])
+
+# print(f"L2 relative error on top nodes (vector displacement) = {rel_L2_vec:.3e}")
+# print(f"L2 relative error on top nodes (u_z component)       = {rel_L2_z:.3e}")
 
 ##############################Construct S_c#############################################
 # inv = np.linalg.inv
@@ -1067,3 +1121,87 @@ print("Wrote cube2bem.vtu with component-wise BCs")
 # )
 
 # np.savez("Sc_BEM.npz", Sc=Sc)
+
+
+# ================== Somigliana representation at the cube center ==================
+
+# Interior point
+xc = np.array([0.5, 0.5, 0.5], dtype=float)
+
+
+def u_interior_from_boundary(
+    xc, boundary_points, boundary_cells_conn, elem_nodes, elem_normals, U_nodes, T_nodes
+):
+    """
+    Compute u(xc) = ∫_Γ (G t - H u) dΓ  for an interior point xc
+    using P1 interpolation of u,t on each boundary triangle.
+    """
+    u_xc = np.zeros(3, dtype=float)
+
+    for e, conn in enumerate(boundary_cells_conn):
+        # Geometry of element e
+        elem = elem_nodes[e]  # shape (3,3)
+        normal = elem_normals[e]  # outward normal (unit)
+        # Loop over Dunavant points (regular: no singularity since xc \notin Γ)
+        for (xi1, xi2), w in zip(quad_pts, quad_wts):
+            # Reference -> physical
+            y = map_to_physical_3d(elem, xi1, xi2)
+            J_geo = jacobian_determinant_3d(elem, xi1, xi2)
+
+            # P1 shape functions for nodal interpolation
+            N_vals = shape_functions(xi1, xi2)  # length 3
+
+            # Interpolate boundary displacement u(y) and traction t(y)
+            u_y = (
+                N_vals[0] * U_nodes[conn[0]]
+                + N_vals[1] * U_nodes[conn[1]]
+                + N_vals[2] * U_nodes[conn[2]]
+            )
+            t_y = (
+                N_vals[0] * T_nodes[conn[0]]
+                + N_vals[1] * T_nodes[conn[1]]
+                + N_vals[2] * T_nodes[conn[2]]
+            )
+
+            # Kernels evaluated at (xc, y)
+            G_xy = kelvin_G(xc, y, normal, mu, nu)  # 3x3
+            H_xy = kelvin_H(xc, y, normal, mu, nu)  # 3x3
+
+            # Contribution to u(xc)
+            weight = w * J_geo
+            u_xc += (G_xy @ t_y - H_xy @ u_y) * weight
+
+    return u_xc
+
+
+u_xc_bem = u_interior_from_boundary(
+    xc,
+    boundary_points,
+    boundary_cells_conn,
+    elem_nodes,
+    elem_normals,
+    U,
+    T,
+)
+
+print("Displacement at cube center from BEM (Somigliana):", u_xc_bem)
+
+# ---------------- Compare with analytical solution at x_c ----------------
+
+p0 = 1.0e8
+alpha = nu * p0 / E
+beta = -p0 / E
+
+u_exact_center = np.array(
+    [alpha * xc[0], alpha * xc[1], beta * xc[2]],
+    dtype=float,
+)
+
+err_center = np.linalg.norm(u_xc_bem - u_exact_center) / np.linalg.norm(u_exact_center)
+
+print("Analytical u at cube center:", u_exact_center)
+print(f"Relative error at cube center = {err_center:.3e}")
+
+# ---------------------------------Uniform Disp----------------------------------------------
+Iu_known = np.arange(len(pts))
+It_unknow = np.arange(len(pts))

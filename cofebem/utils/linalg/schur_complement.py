@@ -9,7 +9,7 @@ import numpy as np
 from scipy.linalg import solve
 
 
-def schur_complement(A, B, C, D, assume_a="gen", overwrite_b=False, check_finite=False):
+def schur_complement(A, B, C, D, assume_a="pos", overwrite_b=False, check_finite=False):
     """
     Compute the Schur complement of A in the block matrix M = [[A, B], [C, D]],
     assuming A is invertible.

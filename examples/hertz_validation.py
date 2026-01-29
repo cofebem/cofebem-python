@@ -37,8 +37,11 @@ from cofebem.contact.rigid_indenters import parabolic
 from cofebem.contact.lcp_solvers.ccg import CCG
 from cofebem.contact.lcp_solvers.lemke import lemkelcp
 
+# Try on the sphere
+# L2 error on and t with a refined mesh
+# Comparing G,H_full and nodal collation
 
-############################## MESH0 #############################################################################
+# ######################## MESH0 #############################################################################
 # -------------------------------------------------------------------------------------------------------
 #  Mesh and material parameters
 # -------------------------------------------------------------------------------------------------------
@@ -193,15 +196,15 @@ mesh4, _, _ = gmshio.read_from_msh(
 
 meshes = [mesh0, mesh1, mesh2, mesh3, mesh4]
 
-Sc_dense0 = np.load("./results/hertz/Sc_smart0.npy")
+Sc_dense0 = np.load("Sc_smart0.npy")
 
-Sc_dense1 = np.load("./results/hertz/Sc_smart1.npy")
+Sc_dense1 = np.load("Sc_smart1.npy")
 
-Sc_dense2 = np.load("./results/hertz/Sc_smart2.npy")
+Sc_dense2 = np.load("Sc_smart2.npy")
 
-Sc_dense3 = np.load("./results/hertz/Sc_smart3.npy")
+Sc_dense3 = np.load("Sc_smart3.npy")
 
-Sc_dense4 = np.load("./results/hertz/Sc_smart4.npy")
+Sc_dense4 = np.load("Sc_smart4.npy")
 
 Scs = [Sc_dense0, Sc_dense1, Sc_dense2, Sc_dense3, Sc_dense4]
 
@@ -225,7 +228,7 @@ def hertz_vs_cofebem(meshes, Scs):
     def Gamma_c_selector(x):
         return np.isclose(x[2], H, atol=tol1)
 
-    delta = 0.02
+    delta = 0.08
     R = 100.0
 
     E_star = E / (1.0 - nu**2)
@@ -273,8 +276,15 @@ def hertz_vs_cofebem(meshes, Scs):
             - Gamma_c_x[:, 2]
         )
 
-        p_lemke, _, _ = lemkelcp(Sc_dense, g, max_iter)
+        p0_ = np.maximum(-g, 0) * 1e16
 
+        p_lemke, _, err_hist = CCG(
+            Sc_dense, "displacement", g, max_iter, 1e-5, p0=p0_
+        ).solve()
+        # p_lemke, _, _ = lemkelcp(Sc_dense, g, max_iter)
+        # for i, (x, y, z) in enumerate(err_hist):
+        #     print(f" iter = {i} : {x}, {y}, {z}")
+        # # print(err_hist[:3])
         facet2verts = mesh.topology.connectivity(fdim, 0)
 
         facet_area = np.zeros(len(Gamma_c), dtype=np.float64)
@@ -292,8 +302,45 @@ def hertz_vs_cofebem(meshes, Scs):
                 area_node[v] += share
 
         p_press = p_lemke / area_node[Ic]
-
         p_num = p_press
+
+        rc = np.sqrt((Gamma_c_x[:, 0] - 20) ** 2 + (Gamma_c_x[:, 1] - 20) ** 2)
+
+        p_hertz_ = p_hertz(rc, p0_theo, a_theo)
+
+        # eps = 1e-8
+        # err_r = np.zeros_like(p_hertz_)
+        # mask = np.abs(p_hertz_) > eps
+        # err_r[mask] = np.abs(p_num[mask] - p_hertz_[mask]) / np.abs(p_hertz_[mask])
+        p_hertz_avg = (np.pi / 4) * p0_theo
+        err_r = (np.abs(p_num - p_hertz_) ** 2) / (p_hertz_avg**2)
+
+        p_fenics_num = Function(V)
+        p_fenics_num.name = "p_num"
+
+        p_fenics_hertz = Function(V)
+        p_fenics_hertz.name = "p_hertz"
+
+        err_fenics = Function(V)
+        err_fenics.name = "error_p"
+
+        with VTKFile(mesh.comm, f"hertz_smart{i}.pvd", "w") as vtk:
+            vtk.write_mesh(mesh)
+            vtk.write_function([p_fenics_num, p_fenics_hertz, err_fenics], 0)
+
+        p_fenics_num.x.array[:] = 0
+        p_fenics_num.x.array[3 * Ic + 2] = p_num
+        p_fenics_num.x.scatter_forward()
+
+        p_fenics_hertz.x.array[:] = 0
+        p_fenics_hertz.x.array[3 * Ic + 2] = p_hertz_
+        p_fenics_hertz.x.scatter_forward()
+
+        err_fenics.x.array[:] = 0
+        err_fenics.x.array[3 * Ic + 2] = err_r
+        err_fenics.x.scatter_forward()
+
+        vtk.write_function([p_fenics_num, p_fenics_hertz, err_fenics], 1)
 
         r = np.linalg.norm(Gamma_c_x[:, :2] - contact_center, axis=1)
         contact_nodes = p_num > 0
@@ -338,7 +385,7 @@ def hertz_vs_cofebem(meshes, Scs):
     ax.legend()
     ax.grid(True)
 
-    fig.savefig("./results/hertz/hertz_vs_cofebem_smart.png", format="png")
+    # fig.savefig("./results/hertz/hertz_vs_cofebem_smart.png", format="png")
 
     fig1, ax1 = plt.subplots(figsize=(6, 4))
     ax1.loglog(h_max, errors, "o-", lw=2)
@@ -355,13 +402,16 @@ def hertz_vs_cofebem(meshes, Scs):
     ax1.grid(True, which="both", ls="--", alpha=0.6)
     ax1.legend()
 
-    fig1.savefig("./results/hertz/hertz_vs_cofebem_error.png", format="png")
+    # fig1.savefig("./results/hertz/hertz_vs_cofebem_error.png", format="png")
 
     plt.tight_layout()
     plt.show()
 
 
 hertz_vs_cofebem(meshes, Scs)
+
+# ===========================================================================================
+#
 # # hx = l / nx
 # # hy = l / ny
 # # area_facet = hx * hy

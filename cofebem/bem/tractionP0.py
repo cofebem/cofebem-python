@@ -333,7 +333,7 @@ for frame, x0 in enumerate(x_pos):
                 gap_elem[e_idx] = gaps_pts.mean()
 
     p_elem, _, _ = CCG(Sc_elem, error_type, gap_elem, max_iter, tolerance).solve()
-    # p_elem = lemkelcp(Sc_elem, -gap_elem)[0]  # alternative
+    # p_elem = lemkelcp(Sc_elem, gap_elem)[0]  # alternative
 
     p_nodes = Pi_u_to_p.T @ p_elem
 
