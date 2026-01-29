@@ -8,9 +8,9 @@ R  = 5;           // radius of the indentation zone
 Rm = 8;           // radius of the mesh density change
 
 // ---- mesh parameters ---------
-hMin = 0.25;      // finest size 
-hMed = 1.0;      // intermediate size
-hMax = 10.00;      // coarsest size 
+hMin = 0.16384;      // finest size 
+hMed = 2.62144;      // intermediate size
+hMax = 3.93216;      // coarsest size 
 
 Point(1) = {0,0,0,hMax};
 Point(2) = {L,0,0,hMax};
@@ -155,3 +155,5 @@ Volume(2) = {4};
 Surface Loop(5) = {9, 10, 11, 12, 15, 6, 5, 4, 3, 7};
 //+
 Volume(3) = {5};
+
+Physical Volume("cube", 1) = {1, 2, 3};

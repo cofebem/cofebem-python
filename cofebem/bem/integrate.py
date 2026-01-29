@@ -1,149 +1,147 @@
 import numpy as np
-import math
 
 
-# def tri_shapes_function(xi1, xi2):
-#     N1 = 1 - xi1 - xi2
-#     N2 = xi1
-#     N3 = xi2
-#     return np.array([N1, N2, N3])
+def dunavant_rule(degree: int):
+    if degree <= 1:
+        pts = np.array([[1 / 3, 1 / 3]], dtype=float)
+        w = np.array([0.5], dtype=float)
 
+    elif degree == 2:
+        a = 1.0 / 6.0
+        b = 2.0 / 3.0
+        pts = np.array([[a, a], [b, a], [a, b]], dtype=float)
+        w = np.array([1 / 6, 1 / 6, 1 / 6], dtype=float)
 
-# def polar_tri_shape_functions(alpha):
-#     N1 = -math.cos(alpha) + math.sin(alpha)
-#     N2 = math.cos(alpha)
-#     N3 = math.sin(alpha)
-#     return np.array([N1, N2, N3])
+    elif degree == 3:
+        pts = np.array(
+            [[1 / 3, 1 / 3], [0.6, 0.2], [0.2, 0.6], [0.2, 0.2]], dtype=float
+        )
+        w = np.array([-27 / 96, 25 / 96, 25 / 96, 25 / 96], dtype=float)
 
+    elif degree == 4:
+        a = 0.445948490915965
+        b = 0.091576213509771
+        w1 = 0.111690794839005
+        w2 = 0.054975871827661
+        pts = np.array(
+            [
+                [a, a],
+                [1 - 2 * a, a],
+                [a, 1 - 2 * a],
+                [b, b],
+                [1 - 2 * b, b],
+                [b, 1 - 2 * b],
+            ],
+            dtype=float,
+        )
+        w = np.array([w1, w1, w1, w2, w2, w2], dtype=float)
 
-# def tri_shape_function_derivatives(xi1, xi2):
-#     dN1_dxi1 = -1
-#     dN1_dxi2 = -1
-#     dN2_dxi1 = 1
-#     dN2_dxi2 = 0
-#     dN3_dxi1 = 0
-#     dN3_dxi2 = 1
-#     return np.array(
-#         [
-#             [dN1_dxi1, dN1_dxi2],
-#             [dN2_dxi1, dN2_dxi2],
-#             [dN3_dxi1, dN3_dxi2],
-#         ]
-#     )
+    elif degree == 5:
+        a = 0.101286507323456
+        b = 0.470142064105115
+        w1 = 0.0629695902724136
+        w2 = 0.066197076394253
+        pts = np.array(
+            [
+                [a, a],
+                [1 - 2 * a, a],
+                [a, 1 - 2 * a],
+                [b, b],
+                [1 - 2 * b, b],
+                [b, 1 - 2 * b],
+                [1 / 3, 1 / 3],
+            ],
+            dtype=float,
+        )
+        w = np.array([w1, w1, w1, w2, w2, w2, 0.1125], dtype=float)
 
+    elif degree == 13:
+        pts = np.array(
+            [
+                [0.333333333333333333333333333333, 0.333333333333333333333333333333],
+                [0.950275662924105565450352089520, 0.024862168537947217274823955239],
+                [0.024862168537947217274823955239, 0.950275662924105565450352089520],
+                [0.024862168537947217274823955239, 0.024862168537947217274823955239],
+                [0.171614914923835347556304795551, 0.414192542538082326221847602214],
+                [0.414192542538082326221847602214, 0.171614914923835347556304795551],
+                [0.414192542538082326221847602214, 0.414192542538082326221847602214],
+                [0.539412243677190440263092985511, 0.230293878161404779868453507244],
+                [0.230293878161404779868453507244, 0.539412243677190440263092985511],
+                [0.230293878161404779868453507244, 0.230293878161404779868453507244],
+                [0.772160036676532561750285570113, 0.113919981661733719124857214943],
+                [0.113919981661733719124857214943, 0.772160036676532561750285570113],
+                [0.113919981661733719124857214943, 0.113919981661733719124857214943],
+                [0.009085399949835353883572964740, 0.495457300025082323058213517632],
+                [0.495457300025082323058213517632, 0.009085399949835353883572964740],
+                [0.495457300025082323058213517632, 0.495457300025082323058213517632],
+                [0.062277290305886993497083640527, 0.468861354847056503251458179727],
+                [0.468861354847056503251458179727, 0.062277290305886993497083640527],
+                [0.468861354847056503251458179727, 0.468861354847056503251458179727],
+                [0.022076289653624405142446876931, 0.851306504174348550389457672223],
+                [0.022076289653624405142446876931, 0.126617206172027096933163647918],
+                [0.851306504174348550389457672223, 0.022076289653624405142446876931],
+                [0.126617206172027096933163647918, 0.851306504174348550389457672223],
+                [0.851306504174348550389457672223, 0.126617206172027096933163647918],
+                [0.126617206172027096933163647918, 0.022076289653624405142446876931],
+                [0.018620522802520968955913511549, 0.689441970728591295496647976487],
+                [0.018620522802520968955913511549, 0.291937506468887771754472382212],
+                [0.689441970728591295496647976487, 0.018620522802520968955913511549],
+                [0.291937506468887771754472382212, 0.689441970728591295496647976487],
+                [0.689441970728591295496647976487, 0.291937506468887771754472382212],
+                [0.291937506468887771754472382212, 0.018620522802520968955913511549],
+                [0.096506481292159228736516560903, 0.635867859433872768286976979827],
+                [0.096506481292159228736516560903, 0.267625659273967961282458816185],
+                [0.635867859433872768286976979827, 0.096506481292159228736516560903],
+                [0.267625659273967961282458816185, 0.635867859433872768286976979827],
+                [0.635867859433872768286976979827, 0.267625659273967961282458816185],
+                [0.267625659273967961282458816185, 0.096506481292159228736516560903],
+            ]
+        )
 
-def shape_functions(xi1, xi2):
-    N1 = 0.25 * (1 - xi1) * (1 - xi2)
-    N2 = 0.25 * (1 + xi1) * (1 - xi2)
-    N3 = 0.25 * (1 + xi1) * (1 + xi2)
-    N4 = 0.25 * (1 - xi1) * (1 + xi2)
-    return np.array([N1, N2, N3, N4])
+        w_raw = np.array(
+            [
+                0.051739766065744133555179145422,
+                0.008007799555564801597804123460,
+                0.008007799555564801597804123460,
+                0.008007799555564801597804123460,
+                0.046868898981821644823226732071,
+                0.046868898981821644823226732071,
+                0.046868898981821644823226732071,
+                0.046590940183976487960361770070,
+                0.046590940183976487960361770070,
+                0.046590940183976487960361770070,
+                0.031016943313796381407646220131,
+                0.031016943313796381407646220131,
+                0.031016943313796381407646220131,
+                0.010791612736631273623178240136,
+                0.010791612736631273623178240136,
+                0.010791612736631273623178240136,
+                0.032195534242431618819414482205,
+                0.032195534242431618819414482205,
+                0.032195534242431618819414482205,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.015445834210701583817692900053,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.017822989923178661888748319485,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+                0.037038683681384627918546472190,
+            ]
+        )
+        w = 0.5 * w_raw
 
-
-def shape_function_derivatives(xi1, xi2):
-    dN1_dxi1 = -0.25 * (1 - xi2)
-    dN1_dxi2 = -0.25 * (1 - xi1)
-    dN2_dxi1 = 0.25 * (1 - xi2)
-    dN2_dxi2 = -0.25 * (1 + xi1)
-    dN3_dxi1 = 0.25 * (1 + xi2)
-    dN3_dxi2 = 0.25 * (1 + xi1)
-    dN4_dxi1 = -0.25 * (1 + xi2)
-    dN4_dxi2 = 0.25 * (1 - xi1)
-    return np.array(
-        [
-            [dN1_dxi1, dN1_dxi2],
-            [dN2_dxi1, dN2_dxi2],
-            [dN3_dxi1, dN3_dxi2],
-            [dN4_dxi1, dN4_dxi2],
-        ]
-    )
-
-
-def map_to_physical_3d(element, xi1, xi2):
-    N_vals = shape_functions(xi1, xi2)
-    point = np.dot(N_vals, element)
-    return point
-
-
-def jacobian_determinant_3d(element, xi1, xi2):
-    dN = shape_function_derivatives(xi1, xi2)  # shape (4,2)
-    J = np.zeros((3, 2))
-    for i in range(4):
-        J[:, 0] += dN[i, 0] * element[i, :]
-        J[:, 1] += dN[i, 1] * element[i, :]
-    cross_prod = np.cross(J[:, 0], J[:, 1])
-    return np.linalg.norm(cross_prod)
-
-
-def integrate(
-    kernel, x_c, normal, nodes, mu, nu, singular, n_gauss, local_index
-):  # , regularity="reg"):
-
-    # element = np.array(nodes).reshape((4, 3))
-    element = nodes
-    # match regularity:
-    #     case "reg":
-    #         gauss_nodes, gauss_weights = np.polynomial.legendre.leggauss(n_gauss)
-    #         result = np.zeros((3, 3))
-    #         for i in range(n_gauss):
-    #             for j in range(n_gauss):
-    #                 xi1 = gauss_nodes[i]
-    #                 xi2 = gauss_nodes[j]
-    #                 weight = gauss_weights[i] * gauss_weights[j]
-    #                 N_vals = shape_functions(xi1, xi2)
-    #                 N_local = N_vals[local_index]
-    #                 y = map_to_physical_3d(element, xi1, xi2)
-    #                 J_geo = jacobian_determinant_3d(element, xi1, xi2)
-    #                 total_weight = weight * J_geo
-    #                 result += kernel(x_c, y, normal, mu, nu) * (N_local * total_weight)
-    #         return result
-    #     case "near_sing":  # PART or Cubic(Telles) Transformatiom
-    #         pass
-    #     case "weak_sing":
-    #         pass  # Duffy or Bonnet transformation
-    #     case "strong_sing":
-    #         pass  # CPV with Guggiani's method
-
-    if not singular:
-        gauss_nodes, gauss_weights = np.polynomial.legendre.leggauss(n_gauss)
-        result = np.zeros((3, 3))
-        for i in range(n_gauss):
-            for j in range(n_gauss):
-                xi1 = gauss_nodes[i]
-                xi2 = gauss_nodes[j]
-                weight = gauss_weights[i] * gauss_weights[j]
-                N_vals = shape_functions(xi1, xi2)
-                N_local = N_vals[local_index]
-                y = map_to_physical_3d(element, xi1, xi2)
-                J_geo = jacobian_determinant_3d(element, xi1, xi2)
-                total_weight = weight * J_geo
-                result += kernel(x_c, y, normal, mu, nu) * (N_local * total_weight)
-        return result
     else:
-        #  xi1 = -1 + ρ cos α,   xi2 = -1 + ρ sin α, with α ∈ [0, π/2] and ρ in [0, ρ_max(α)].
-        result = np.zeros((3, 3))
-        # Gauss quadrature in α over [0, π/2]
-        # alpha_nodes, alpha_weights = np.polynomial.legendre.leggauss(n_gauss)
-        # alpha_nodes = 0.5 * (alpha_nodes + 1) * (math.pi / 2)
-        # alpha_weights = 0.5 * (math.pi / 2) * alpha_weights
-        # for i in range(n_gauss):
-        #     alpha = alpha_nodes[i]
-        #     w_alpha = alpha_weights[i]
-        #     # ρ_max = min(2/cosα, 2/sinα).
-        #     rho_max = min(2.0 / np.cos(alpha), 2.0 / np.sin(alpha))
-        #     # Gauss quadrature in ρ over [0, rho_max]
-        #     rho_nodes, rho_weights = np.polynomial.legendre.leggauss(n_gauss)
-        #     rho_nodes = 0.5 * (rho_nodes + 1) * rho_max
-        #     rho_weights = 0.5 * rho_max * rho_weights
-        #     for j in range(n_gauss):
-        #         rho = rho_nodes[j]
-        #         w_rho = rho_weights[j]
-        #         xi1 = -1 + rho * np.cos(alpha)
-        #         xi2 = -1 + rho * np.sin(alpha)
-        #         N_vals = shape_functions(xi1, xi2)
-        #         N_local = N_vals[local_index]
-        #         y = map_to_physical_3d(element, xi1, xi2)
-        #         J_geo = jacobian_determinant_3d(element, xi1, xi2)
-        #         total_weight = w_alpha * w_rho * (rho * J_geo)
-        #         result += kernel(x_c, y, normal, mu, nu) * (N_local * total_weight)
-        return result
+        return dunavant_rule(5)
+
+    return pts, w

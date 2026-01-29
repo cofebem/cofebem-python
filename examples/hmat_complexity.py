@@ -1,5 +1,5 @@
 import time
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Callable
 
 import numpy as np
 import meshio
@@ -30,18 +30,17 @@ def MatVec(A: np.ndarray, x: np.ndarray) -> np.ndarray:
         for j in range(n):
             acc += A[i, j] * x_flat[j]
         b[i] = acc
-        # acc = 0.0
     return b
 
 
-def time_once(func, *args, **kwargs) -> float:
+def time_once(func: Callable, *args, **kwargs) -> float:
     t0 = time.perf_counter()
     func(*args, **kwargs)
     t1 = time.perf_counter()
     return t1 - t0
 
 
-def time_average(func, repeats: int, *args, **kwargs) -> float:
+def time_average(func: Callable, repeats: int, *args, **kwargs) -> float:
     # One warm-up (especially for Numba JIT)
     func(*args, **kwargs)
     acc = 0.0
@@ -50,15 +49,58 @@ def time_average(func, repeats: int, *args, **kwargs) -> float:
     return acc / repeats
 
 
+# def benchmark_grid(
+#     pts: np.ndarray,
+#     A: np.ndarray,
+#     leaf_grid: List[int],
+#     eta_grid: List[float],
+#     tol: float = 1e-6,
+#     split: str = "pca",
+#     repeats: int = 3,
+# ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+#     n = len(pts)
+#     v = np.random.randn(n)
+
+#     t_py = time_average(MatVec, repeats, A, v)
+
+#     times_H = np.zeros((len(eta_grid), len(leaf_grid)), dtype=float)
+#     times_py = np.zeros_like(times_H)
+#     rel_errs = np.zeros_like(times_H)
+
+#     for ie, eta in enumerate(eta_grid):
+#         for il, leaf in enumerate(leaf_grid):
+#             hm = HMatrix(
+#                 pts,
+#                 A,
+#                 leaf_size=leaf,
+#                 eta=eta,
+#                 tol=tol,
+#                 split=split,
+#                 lr_approx="aca_full",
+#             )
+#             # average apply time
+#             t_h = time_average(lambda vec: hm @ vec, repeats, v)
+#             yH = hm @ v
+#             yA = A @ v
+#             rel = np.linalg.norm(yH - yA) / max(1e-16, np.linalg.norm(yA))
+
+#             times_H[ie, il] = t_h
+#             times_py[ie, il] = t_py  # same value across the grid
+#             rel_errs[ie, il] = rel
+
+#     return times_H, times_py, rel_errs
+
+
 def benchmark_grid(
     pts: np.ndarray,
     A: np.ndarray,
     leaf_grid: List[int],
     eta_grid: List[float],
     tol: float = 1e-6,
-    split: str = "kd",
+    split: str = "pca",
     repeats: int = 3,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
     n = len(pts)
     v = np.random.randn(n)
@@ -69,6 +111,8 @@ def benchmark_grid(
     times_py = np.zeros_like(times_H)
     rel_errs = np.zeros_like(times_H)
 
+    times_overhead = np.zeros_like(times_H)
+
     for ie, eta in enumerate(eta_grid):
         for il, leaf in enumerate(leaf_grid):
             hm = HMatrix(
@@ -78,19 +122,24 @@ def benchmark_grid(
                 eta=eta,
                 tol=tol,
                 split=split,
-                lr_approx="aca_partial",
+                lr_approx="aca_full",
             )
-            # average apply time
+
             t_h = time_average(lambda vec: hm @ vec, repeats, v)
+            t_over = time_average(lambda vec: hm.matvec_overhead(vec), repeats, v)
+
             yH = hm @ v
             yA = A @ v
             rel = np.linalg.norm(yH - yA) / max(1e-16, np.linalg.norm(yA))
 
             times_H[ie, il] = t_h
+            times_overhead[ie, il] = t_over
             times_py[ie, il] = t_py  # same value across the grid
             rel_errs[ie, il] = rel
 
-    return times_H, times_py, rel_errs
+    overhead_ratio = times_overhead / np.maximum(times_H, 1e-16)
+
+    return times_H, times_py, rel_errs, times_overhead, overhead_ratio
 
 
 def plot_heatmap(
@@ -116,9 +165,70 @@ def plot_heatmap(
     plt.show()
 
 
+# if __name__ == "__main__":
+
+#     mesh = meshio.read("hollow_cylinder.xdmf")
+#     pts = mesh.points
+#     cells = mesh.cells
+
+#     X = pts[:, None, :]
+#     Y = pts[None, :, :]
+#     A_full = 1.0 / (np.linalg.norm(X - Y, axis=2) + 1e-8)
+
+#     leaf_grid = [8, 16, 32, 64]
+#     eta_grid = [0.5, 0.7, 1.0, 1.5]
+#     repeats = 5
+
+#     print("\nRunning grid benchmark...")
+#     times_H, times_py, rel_errs = benchmark_grid(
+#         pts, A_full, leaf_grid, eta_grid, tol=1e-6, split="pca", repeats=repeats
+#     )
+
+#     speedup = times_py / np.maximum(times_H, 1e-16)
+
+#     plot_heatmap(
+#         times_H,
+#         leaf_grid,
+#         eta_grid,
+#         title="H-matrix matvec time (s)",
+#         cbar_label="seconds",
+#         fname="hm_time_grid.png",
+#     )
+
+#     plot_heatmap(
+#         times_py,
+#         leaf_grid,
+#         eta_grid,
+#         title="Handmade matvec time (s)",
+#         cbar_label="seconds",
+#         fname="handmade_time_grid.png",
+#     )
+
+#     plot_heatmap(
+#         speedup,
+#         leaf_grid,
+#         eta_grid,
+#         title="Speedup: handmade / H-matvec",
+#         cbar_label="× faster",
+#         fname="speedup_grid.png",
+#     )
+
+#     plot_heatmap(
+#         rel_errs,
+#         leaf_grid,
+#         eta_grid,
+#         title="Relative error ‖Hv−Av‖/‖Av‖",
+#         cbar_label="error",
+#         fname="rel_error_grid.png",
+#     )
+
+#     print(
+#         "\nDone. Saved: hm_time_grid.png, handmade_time_grid.png, speedup_grid.png, rel_error_grid.png"
+#     )
+
 if __name__ == "__main__":
 
-    mesh = meshio.read("../hollow_cylinder.xdmf")
+    mesh = meshio.read("hollow_cylinder.xdmf")
     pts = mesh.points
     cells = mesh.cells
 
@@ -128,30 +238,17 @@ if __name__ == "__main__":
 
     leaf_grid = [8, 16, 32, 64]
     eta_grid = [0.5, 0.7, 1.0, 1.5]
-    repeats = 3
-
-    LEAF_SIZE = [8, 64]
-    for leaf_size in LEAF_SIZE:
-        print(f"\nRunning H-matrix with leaf_size={leaf_size}...")
-        hmat = HMatrix(
-            pts,
-            A_full,
-            leaf_size=leaf_size,
-            eta=1.0,
-            tol=1e-6,
-            split="pca",
-            lr_approx="aca_partial",
-        )
-        hmat.visualize(f"hmat_example_{leaf_size}.pdf")
-    exit(1)
+    repeats = 5
 
     print("\nRunning grid benchmark...")
-    times_H, times_py, rel_errs = benchmark_grid(
+    (times_H, times_py, rel_errs, times_overhead, overhead_ratio) = benchmark_grid(
         pts, A_full, leaf_grid, eta_grid, tol=1e-6, split="pca", repeats=repeats
     )
 
     speedup = times_py / np.maximum(times_H, 1e-16)
+    compute_only = np.maximum(times_H - times_overhead, 0.0)
 
+    # --- Plots ---
     plot_heatmap(
         times_H,
         leaf_grid,
@@ -159,6 +256,33 @@ if __name__ == "__main__":
         title="H-matrix matvec time (s)",
         cbar_label="seconds",
         fname="hm_time_grid.png",
+    )
+
+    plot_heatmap(
+        times_overhead,
+        leaf_grid,
+        eta_grid,
+        title="H-matrix overhead-only time (s)",
+        cbar_label="seconds",
+        fname="hm_overhead_time_grid.png",
+    )
+
+    plot_heatmap(
+        overhead_ratio,
+        leaf_grid,
+        eta_grid,
+        title="Overhead fraction: overhead / total",
+        cbar_label="fraction",
+        fname="hm_overhead_ratio_grid.png",
+    )
+
+    plot_heatmap(
+        compute_only,
+        leaf_grid,
+        eta_grid,
+        title="H-matrix compute-only time (approx = total − overhead)",
+        cbar_label="seconds",
+        fname="hm_compute_only_grid.png",
     )
 
     plot_heatmap(
@@ -189,5 +313,7 @@ if __name__ == "__main__":
     )
 
     print(
-        "\nDone. Saved: hm_time_grid.png, handmade_time_grid.png, speedup_grid.png, rel_error_grid.png"
+        "\nDone. Saved: "
+        "hm_time_grid.png, hm_overhead_time_grid.png, hm_overhead_ratio_grid.png, "
+        "hm_compute_only_grid.png, handmade_time_grid.png, speedup_grid.png, rel_error_grid.png"
     )

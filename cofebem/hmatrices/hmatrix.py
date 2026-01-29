@@ -77,40 +77,51 @@ class HMatrix:
 
         self._nb_kinds = np.array(kinds_py, dtype=np.int8)
 
-    # def __matmul__(self, x):
-    #     if x.shape[0] != len(self.pts):
-    #         raise ValueError("size mismatch")
-    #     y = np.zeros_like(x, dtype=float)
-    #     for bl in self.block_tree.blocks:
-    #         y[bl.row.idx] += bl.matvec(x[bl.col.idx])
-    #     return y
-
     def __matmul__(self, x):
-        if x.ndim != 1:
-            raise ValueError("Use a 1‑D vector on the right‑hand side.")
         if x.shape[0] != len(self.pts):
-            raise ValueError(
-                "Size mismatch: got |x| = %d, expected %d" % (x.shape[0], len(self.pts))
-            )
-
+            raise ValueError("size mismatch")
         y = np.zeros_like(x, dtype=float)
-
-        try:
-            _hmatvec_numba(
-                self._nb_rows,
-                self._nb_cols,
-                self._nb_kinds,
-                self._nb_U,
-                self._nb_V,
-                self._nb_D,
-                x,
-                y,
-            )
-        except Exception:
-            for bl in self.block_tree.blocks:
-                y[bl.row.idx] += bl.matvec(x[bl.col.idx])
-
+        for bl in self.block_tree.blocks:
+            y[bl.row.idx] += bl.matvec(x[bl.col.idx])
         return y
+
+    def matvec_overhead(self, x):
+        # measure overhead = looping + broadcasting (no arithmetic)
+        y = np.zeros_like(x, dtype=float)
+        s = 0.0
+        for bl in self.block_tree.blocks:
+            rows = bl.row.idx
+            cols = bl.col.idx
+            s += float(np.sum(x[cols])) * 0.0
+            y[rows] += 0.0
+        return y
+
+    # def __matmul__(self, x):
+    #     if x.ndim != 1:
+    #         raise ValueError("Use a 1‑D vector on the right‑hand side.")
+    #     if x.shape[0] != len(self.pts):
+    #         raise ValueError(
+    #             "Size mismatch: got |x| = %d, expected %d" % (x.shape[0], len(self.pts))
+    #         )
+
+    #     y = np.zeros_like(x, dtype=float)
+
+    #     try:
+    #         _hmatvec_numba(
+    #             self._nb_rows,
+    #             self._nb_cols,
+    #             self._nb_kinds,
+    #             self._nb_U,
+    #             self._nb_V,
+    #             self._nb_D,
+    #             x,
+    #             y,
+    #         )
+    #     except Exception:
+    #         for bl in self.block_tree.blocks:
+    #             y[bl.row.idx] += bl.matvec(x[bl.col.idx])
+
+    #     return y
 
     def stats(self):
         lr = sum(bl.kind == "lr" for bl in self.block_tree.blocks)
