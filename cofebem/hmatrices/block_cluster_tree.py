@@ -3,11 +3,11 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from .cluster_tree import Cluster, ClusterTree
-from .low_rank_approx.aca_full import aca_full
-from .low_rank_approx.aca_partial import aca_partial
-from .low_rank_approx.aca_plus import aca_plus
-from .low_rank_approx.aca_gp import aca_gp
-from .low_rank_approx.truncated_svd import truncated_svd
+from cofebem.low_rank_approx.aca_full import aca_full
+from cofebem.low_rank_approx.aca_partial import aca_partial
+from cofebem.low_rank_approx.aca_plus import aca_plus
+from cofebem.low_rank_approx.aca_gp import aca_gp
+from cofebem.low_rank_approx.truncated_svd import truncated_svd
 
 
 def matvec_(A: np.ndarray, x: np.ndarray) -> np.ndarray:

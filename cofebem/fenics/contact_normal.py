@@ -10,11 +10,11 @@ from dolfinx.fem.petsc import (
     apply_lifting,
     LinearProblem,
 )
-from ufl import TrialFunction, TestFunction, inner, FacetNormal, dx
+from ufl import TrialFunction, TestFunction, inner, FacetNormal, dx, ds
 
-from contact.lcp_solvers.ccg import CCG
-from contact.lcp_solvers.lemke import lemkelcp
-from contact.Sc_normal import Sc_normal
+from ..contact.lcp_solvers.ccg import CCG
+from ..contact.lcp_solvers.lemke import lemkelcp
+from ..contact.Sc_normal import Sc_normal
 
 
 class Contact_normal:
@@ -196,7 +196,7 @@ class Contact_normal:
 
     def gap_n(self) -> np.ndarray:
         pts = self.pts_c()
-        return self.indenter.gap_n(pts, self.normals)
+        return self.indenter.new_gap_n(pts, self.normals, warn_dist=0.3)
 
     def solve(self, max_iter=1000, tol=1e-6, *args, **kwargs):
         g = self.gap_n()

@@ -1,3 +1,16 @@
 numpy>=1.18.0
 scipy>=1.4.0
 matplotlib>=3.1.0
+mpi4py>=3.0.0
+fenics>=2019.1.0
+dolfinx>=0.6.0
+ufl>=2019.1.0
+petsc4py>=3.12.0
+h5py>=2.10.0
+meshio>=4.0.0
+numpy-stl>=2.10.0
+pyvista>=0.29.0
+pyvistaqt>=0.3.0
+pytest>=6.0.0
+tqdm>=4.0.0
+

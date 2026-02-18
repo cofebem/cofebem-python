@@ -11,25 +11,27 @@ from dolfinx.fem import (
     locate_dofs_topological,
 )
 from dolfinx.fem.petsc import LinearProblem
-from dolfinx.io import gmshio, VTKFile, XDMFFile
+from dolfinx.io import gmshio, VTKFile
 
 from ufl import Identity, Measure, TrialFunction, TestFunction, sym, grad, inner, tr, dx
 
-from cofebem.bodies.sphere_indenter import Sphere
+from cofebem.bodies.cone_indenter import Cone
 from cofebem.fenics.contact import Contact
 
 
 # ---------------- Mesh ----------------
-# mesh, cell_tags, facet_tags = gmshio.read_from_msh(
-#     "./geo_files/cubetest.msh", MPI.COMM_WORLD, 0, gdim=3
-# )
-L = 1.0
-ncells = 10
+
+nx = 40
+ny = 40
+nz = 10
+
+l = 1
+
 mesh = create_box(
     MPI.COMM_WORLD,
-    [[0.0, 0.0, 0.0], [L, L, L]],
-    [ncells, ncells, ncells],
-    CellType.tetrahedron,
+    [np.array([0.0, 0.0, 0.0]), np.array([l, l, l])],
+    [nx, ny, nz],
+    CellType.hexahedron,
 )
 tdim = mesh.topology.dim
 fdim = tdim - 1
@@ -94,6 +96,7 @@ Gamma_c_id = 2
 Gamma_c_tags = np.full(Gamma_c.shape, Gamma_c_id, dtype=np.int32)
 
 tc = Function(V)
+tc.name = "$p_{c}$"
 
 # ---------------------- Setup Neumann and contact contributions to L ----------------
 facet_indices = np.hstack([Gamma_t, Gamma_c]).astype(np.int32)
@@ -122,7 +125,15 @@ problem = LinearProblem(
 problem.u.name = "u"
 
 # ---------------- Setup indentation Scenario ----------------
-indenter = Sphere(center=np.array([0.5, 0.5, 1.9]), radius=1.0)
+delta = 0.3
+R = 0.5  # top radius
+H = 1.0  # height (top -> apex)
+
+indenter = Cone(
+    top_center=np.array([0.5, 0.5, l - delta]),
+    top_radius=R,
+    height=H,
+)
 
 contact = Contact(
     mesh=mesh,
@@ -135,49 +146,42 @@ contact = Contact(
     solver="lemke",
 )
 
+n_frames = 40
+xcs = np.linspace(0, l, n_frames)
 
-n_frames = 50
-time = np.linspace(0.0, 1.0, n_frames)
-amplitude_a = 1.0
-amplitude_b = 0.5
+cone_mesh, _, _ = gmshio.read_from_msh(
+    "./msh_files/cone.msh", MPI.COMM_WORLD, 0, gdim=3
+)
 
-sphere_mesh_path = "./msh_files/fine2_sphere.msh"
-sphere_mesh, _, _ = gmshio.read_from_msh(sphere_mesh_path, MPI.COMM_WORLD, 0, gdim=3)
+cone_ref_x = cone_mesh.geometry.x[:, :3].copy()
 
-sphere_ref_x = sphere_mesh.geometry.x[:, :3].copy()
-V_sphere = functionspace(sphere_mesh, ("Lagrange", 1))
-u_sphere = Function(V_sphere)
-u_sphere.name = "indenter"
+X = cone_ref_x.copy()
+X[:, 0] *= indenter.radius
+X[:, 1] *= indenter.radius
+X[:, 2] *= indenter.height
 
-output_mesh = "./results/fenicsx_pipeline_vy/deformed_mesh.pvd"
-output_indenter = "./results/fenicsx_pipeline_vy/indenter.pvd"
-output_vtk = "./results/fenicsx_pipeline_vy/deformation_results.pvd"
+V_cone = functionspace(cone_mesh, ("Lagrange", 1))
+u_cone = Function(V_cone)
+u_cone.name = "indenter"
 
-with VTKFile(mesh.comm, output_vtk, "w") as vtk, VTKFile(
-    mesh.comm, output_mesh, "w"
-) as vtk_def, VTKFile(mesh.comm, output_indenter, "w") as vtk_indenter:
-    for k, t in enumerate(time):
-        print(f"Frame {k+1}/{n_frames}")
-        theta = 2 * np.pi * (t - 0.25)
-        xc = amplitude_a * np.sin(theta)
-        yc = 0.5 + amplitude_b * np.sin(theta) * np.cos(theta)
-        indenter.center = np.array([xc, yc, 1.8])
+
+with VTKFile(mesh.comm, "./results/cone_indent/cone_indent.pvd", "w") as vtk1, VTKFile(
+    cone_mesh.comm, "./results/cone_indent/cone.pvd", "w"
+) as vtk2:
+    for k, xc in enumerate(xcs):
+        print(f"Frame {k+1}/{n_frames}: Indenter top_center x = {xc:.3f}")
+
+        indenter.top_center = np.array([xc, 0.5, l + H - delta])
+
         contact.solve(max_iter=1000, tol=1e-6)
         contact.apply_contact_forces()
         problem.solve()
 
-        # Save results on reference mesh
-        vtk.write_function(problem.u, t=k)
+        vtk1.write_mesh(mesh, t=k)
+        vtk1.write_function([problem.u, contact.tc], t=k)
 
-        # Indenter
-        sphere_mesh.geometry.x[:, :3] = sphere_ref_x * indenter.radius + indenter.center
-        vtk_indenter.write_function(u_sphere, t=k)
-
-        # Move mesh to deformed configuration, save, and move back
-        u_vals = problem.u.x.array.reshape((-1, 3))
-        mesh.geometry.x[:, :3] += u_vals
-        vtk_def.write_function(problem.u, t=k)
-        mesh.geometry.x[:, :3] -= u_vals
-
+        cone_mesh.geometry.x[:, :3] = X + indenter.top_center
+        vtk2.write_mesh(cone_mesh, t=k)
+        # vtk2.write_function(u_cone, t=k)
 
 print("Done")

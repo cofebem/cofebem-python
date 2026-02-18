@@ -1,9 +1,9 @@
 import meshio
 
-input_file = "msh_files/hemisphere6.msh"
+input_file = "./geo_files/Pikachu.msh"
 
 
-vtk_output = "/hemisphere6.vtk"
+vtk_output = "Pikachu.vtk"
 xdmf_output = "hertz_cube.xdmf"
 
 mesh = meshio.read(input_file)
