@@ -55,6 +55,14 @@ class Contact:
         dofs_c_W = locate_dofs_topological(W, fdim, self.Gamma_c)
         self.dofs_c_W = np.asarray(dofs_c_W, dtype=np.int32)
 
+        #########################
+        self.W = W
+        self.W_to_V = np.asarray(W_to_V, dtype=np.int32)
+        self.dofs_c_W = np.asarray(dofs_c_W, dtype=np.int32)
+        self.dofs_c_V = self.W_to_V[self.dofs_c_W]
+        self.W_coords = W.tabulate_dof_coordinates().reshape(-1, 3)
+        #########################
+
         self.dofs_c_V = np.asarray(W_to_V, dtype=np.int32)[self.dofs_c_W]
 
         p = TrialFunction(W)
@@ -83,7 +91,7 @@ class Contact:
         self._sol = PETSc.Vec().createWithArray(self._sol_arr, comm=comm)
 
     def fc_to_tc(self, fc):
-        self._rhs_arr[:] = fc  # Remeber to change to -fc
+        self._rhs_arr[:] = -fc  # Remeber to change to -fc
         self.ksp_Mcc.solve(self._rhs, self._sol)
         return self._sol_arr
 
@@ -110,10 +118,14 @@ class Contact:
         # if self.save_matrix:
         #     self.Sc.save()
 
+    # def g(self):
+    #     pts = self.mesh.geometry.x[self.Gamma_c_dofs].reshape(
+    #         -1, self.mesh.topology.dim
+    #     )
+    #     return self.indenter.gap(pts)
+
     def g(self):
-        pts = self.mesh.geometry.x[self.Gamma_c_dofs].reshape(
-            -1, self.mesh.topology.dim
-        )
+        pts = self.W_coords[self.dofs_c_W]  # (Nc, 3)
         return self.indenter.gap(pts)
 
     def solve(self, max_iter=1000, tol=1e-6, pfactor=1e12, p0=None, *args, **kwargs):

@@ -21,9 +21,9 @@ from cofebem.fenics.contact import Contact
 
 # ---------------- Mesh ----------------
 
-nx = 40
-ny = 40
-nz = 10
+nx = 20
+ny = 20
+nz = 5
 
 l = 1
 
@@ -146,7 +146,7 @@ contact = Contact(
     solver="lemke",
 )
 
-n_frames = 40
+n_frames = 20
 xcs = np.linspace(0, l, n_frames)
 
 cone_mesh, _, _ = gmshio.read_from_msh(
@@ -177,11 +177,11 @@ with VTKFile(mesh.comm, "./results/cone_indent/cone_indent.pvd", "w") as vtk1, V
         contact.apply_contact_forces()
         problem.solve()
 
-        vtk1.write_mesh(mesh, t=k)
         vtk1.write_function([problem.u, contact.tc], t=k)
 
         cone_mesh.geometry.x[:, :3] = X + indenter.top_center
         vtk2.write_mesh(cone_mesh, t=k)
+        print("k =", k, "top_center =", indenter.top_center, "apex =", indenter.apex)
         # vtk2.write_function(u_cone, t=k)
 
 print("Done")

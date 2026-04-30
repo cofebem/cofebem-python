@@ -97,17 +97,61 @@ b = problem._b
 
 
 # ------------------Setup Solver -----------------
-def setup_solver(mesh, A):
+def setup_solver(
+    mesh,
+    A,
+    ksp_type="preonly",
+    pc_type="lu",
+    rtol=None,
+    atol=None,
+    max_it=None,
+    options_prefix=None,
+):
     solver = PETSc.KSP().create(mesh.comm)
+    if options_prefix is not None:
+        solver.setOptionsPrefix(options_prefix)
     solver.setOperators(A)
-    solver.setType("preonly")
-    solver.getPC().setType("lu")
+    solver.setType(ksp_type)
+    solver.getPC().setType(pc_type)
+    if rtol is not None or atol is not None or max_it is not None:
+        solver.setTolerances(rtol=rtol, atol=atol, max_it=max_it)
     solver.setFromOptions()
     solver.setUp()
     return solver
 
 
-def it_solve_time(mesh, solver, b, Gamma_c_dofs, n):
+def setup_direct_solver(mesh, A):
+    return setup_solver(
+        mesh,
+        A,
+        ksp_type="preonly",
+        pc_type="lu",
+        options_prefix="direct_",
+    )
+
+
+def setup_iterative_solver(mesh, A):
+    return setup_solver(
+        mesh,
+        A,
+        ksp_type="cg",
+        pc_type="gamg",
+        rtol=1e-8,
+        atol=1e-12,
+        max_it=2000,
+        options_prefix="iter_",
+    )
+
+
+def print_solver_info(name, solver):
+    pc = solver.getPC()
+    print(f"{name} KSP type:", solver.getType())
+    print(f"{name} PC type:", pc.getType())
+    if pc.getType() == "lu":
+        print(f"{name} factor solver type:", pc.getFactorSolverType())
+
+
+def it_solve_time(mesh, solver, b, Gamma_c_dofs, n, label="Repeated"):
     duration = 0
     N = b.getSize()
     nc = len(Gamma_c_dofs)
@@ -126,11 +170,11 @@ def it_solve_time(mesh, solver, b, Gamma_c_dofs, n):
         duration += end_time - start_time
         Sc[:, i] = sol.array[3 * Gamma_c_dofs + 2] / 1.0e9
 
-    print(f"Iterative {n} solves took {duration:.4f} seconds")
+    print(f"{label} {n} solves took {duration:.4f} seconds")
     return duration, Sc
 
 
-def batch_solve_time(mesh, solver, b, Gamma_c_dofs, n):
+def batch_solve_time(mesh, solver, b, Gamma_c_dofs, n, label="Batch"):
     N = b.getSize()
     nc = len(Gamma_c_dofs)
     B = PETSc.Mat().createDense([N, n], comm=mesh.comm)
@@ -157,69 +201,120 @@ def batch_solve_time(mesh, solver, b, Gamma_c_dofs, n):
     duration = end_time - start_time
 
     Sc = X.getDenseArray()[3 * Gamma_c_dofs + 2, :] / 1.0e9
-    print(f"Batch {n} solves took {duration:.4f} seconds")
+    print(f"{label} {n} solves took {duration:.4f} seconds")
     return duration, Sc
 
 
+def assert_close(label, reference, candidate, rtol=1e-6, atol=1e-12):
+    if np.allclose(reference, candidate, rtol=rtol, atol=atol):
+        print(f"✔ {label} matches the direct repeated solve")
+        return
+
+    err = np.linalg.norm(reference - candidate)
+    ref = np.linalg.norm(reference)
+    rel = err / ref if ref > 0 else err
+    raise AssertionError(f"✗ {label} mismatch: abs={err:.3e}, rel={rel:.3e}")
+
+
 def benchmark_solve_times(mesh, A, b, Gamma_c_dofs, n):
-    solver = setup_solver(mesh, A)
-    print("KSP type:", solver.getType())
+    direct_solver = setup_direct_solver(mesh, A)
+    iter_solver = setup_iterative_solver(mesh, A)
 
-    pc = solver.getPC()
-    print("PC type:", pc.getType())
+    print_solver_info("Direct", direct_solver)
+    print_solver_info("Iterative", iter_solver)
 
-    print("Factor solver type:", pc.getFactorSolverType())
+    it_duration, it_Sc = it_solve_time(
+        mesh,
+        direct_solver,
+        b,
+        Gamma_c_dofs,
+        n,
+        label="Repeated direct",
+    )
+    batch_duration, batch_Sc = batch_solve_time(
+        mesh,
+        direct_solver,
+        b,
+        Gamma_c_dofs,
+        n,
+        label="Batch direct",
+    )
+    batch_iter_duration, batch_iter_Sc = batch_solve_time(
+        mesh,
+        iter_solver,
+        b,
+        Gamma_c_dofs,
+        n,
+        label="Batch iterative",
+    )
 
-    it_duration, it_Sc = it_solve_time(mesh, solver, b, Gamma_c_dofs, n)
-    batch_duration, batch_Sc = batch_solve_time(mesh, solver, b, Gamma_c_dofs, n)
+    assert_close("Batch direct", it_Sc, batch_Sc)
+    assert_close("Batch iterative", it_Sc, batch_iter_Sc)
 
-    for i in range(n):
-        it_col = it_Sc[:, i]
-        batch_col = batch_Sc[:, i]
-        assert np.allclose(it_col, batch_col), f"✗ Mismatch in solution for column {i}"
-
-    print("✔ All solutions match between iterative and batch solves")
-    return it_duration, batch_duration
+    return it_duration, batch_duration, batch_iter_duration
 
 
 if __name__ == "__main__":
-    solver = setup_solver(mesh, A)
+    solver = setup_direct_solver(mesh, A)
     rhs0 = PETSc.Vec().createMPI(b.getSize(), comm=mesh.comm)
     sol0 = PETSc.Vec().createMPI(b.getSize(), comm=mesh.comm)
     solver.solve(rhs0, sol0)
     print("done")
-    print(sol0)
-    # it_times = []
-    # batch_times = []
-    # ns = np.linspace(1, len(Gamma_c_dofs), 10, dtype=int)
-    # for n in ns:
-    #     it_time, batch_time = benchmark_solve_times(mesh, A, b, Gamma_c_dofs, n)
-    #     it_times.append(it_time)
-    #     batch_times.append(batch_time)
-    #     print("===========================================================")
+    # print(sol0)
+    it_times = []
+    batch_times = []
+    batch_iter_times = []
+    ns = np.linspace(1, 20, 5, dtype=int)
+    for n in ns:
+        it_time, batch_time, batch_iter_time = benchmark_solve_times(
+            mesh, A, b, Gamma_c_dofs, n
+        )
+        it_times.append(it_time)
+        batch_times.append(batch_time)
+        batch_iter_times.append(batch_iter_time)
+        print("===========================================================")
 
-    # import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
 
-    # plt.figure(figsize=(7, 4.5))
+    plt.figure(figsize=(7, 4.5))
 
-    # plt.plot(
-    #     ns, it_times, marker="o", linewidth=2.2, markersize=6, label="Iterative solves"
-    # )
+    plt.plot(
+        ns,
+        it_times,
+        marker="o",
+        linewidth=2.2,
+        markersize=6,
+        label="Repeated direct solves",
+    )
 
-    # plt.plot(
-    #     ns, batch_times, marker="s", linewidth=2.2, markersize=6, label="Batch solves"
-    # )
+    plt.plot(
+        ns,
+        batch_times,
+        marker="s",
+        linewidth=2.2,
+        markersize=6,
+        label="Batch direct solves",
+    )
 
-    # plt.xlabel("Number of solves", fontsize=12)
-    # plt.ylabel("Time (seconds)", fontsize=12)
+    plt.plot(
+        ns,
+        batch_iter_times,
+        marker="^",
+        linewidth=2.2,
+        markersize=6,
+        label="Batch iterative solves",
+    )
 
-    # plt.xticks(fontsize=11)
-    # plt.yticks(fontsize=11)
+    plt.xlabel("Number of solves", fontsize=12)
+    plt.ylabel("Time (seconds)", fontsize=12)
 
-    # plt.grid(True, which="both", linestyle="--", alpha=0.8)
-    # plt.legend(fontsize=11, frameon=True)
+    plt.xticks(fontsize=11)
+    plt.yticks(fontsize=11)
 
-    # plt.title("Solve time scaling", fontsize=13, pad=10)
+    plt.grid(True, which="both", linestyle="--", alpha=0.8)
+    plt.legend(fontsize=11, frameon=True)
 
-    # plt.tight_layout()
-    # plt.show()
+    plt.title("Solve time scaling", fontsize=13, pad=10)
+
+    plt.tight_layout()
+    plt.show()

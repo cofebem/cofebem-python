@@ -164,15 +164,6 @@ def L(v):
     return inner(f_v, v) * dx + inner(t, v) * ds(neumann_marker)
 
 
-sol = Function(V)
-sol.name = "u"
-
-
-with VTKFile(mesh.comm, "CubePatch_fenics.pvd", "w") as vtk:
-    vtk.write_mesh(mesh)
-    vtk.write_function(sol, 0)
-
-
 problem = LinearProblem(
     a=a(u, v),
     L=L(v),
@@ -180,15 +171,17 @@ problem = LinearProblem(
     petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
 )
 
-uh = problem.solve()
+problem.solve()
 
-sol.x.array[:] = uh.x.array[:]
-sol.x.scatter_forward()
+problem.u.name = "u"
 
-vtk.write_function(sol, 1)
+
+with VTKFile(mesh.comm, "cube_fenics.pvd", "w") as vtk:
+    # vtk.write_mesh(mesh)
+    vtk.write_function(problem.u)
 
 if mesh.comm.rank == 0:
-    print("Wrote CubePatch_fenics.pvd")
+    print("Wrote cube_fenics.pvd")
 
 
 coords = mesh.geometry.x
@@ -203,13 +196,13 @@ u_th[:, 1] = alpha * coords[:, 1]
 u_th[:, 2] = beta * coords[:, 2]
 
 
-u_th_flat = np.zeros(3 * N, dtype=sol.x.array.dtype)
+u_th_flat = np.zeros(3 * N, dtype=problem.u.dtype)
 u_th_flat[0::3] = u_th[:, 0]
 u_th_flat[1::3] = u_th[:, 1]
 u_th_flat[2::3] = u_th[:, 2]
 
 
-u_num = sol.x.array
+u_num = problem.u.x.array
 
 err_vec = u_num - u_th_flat
 

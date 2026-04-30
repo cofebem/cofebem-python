@@ -5,10 +5,10 @@ class CCG:
     def __init__(
         self,
         Sc,
-        err_type,
         g,
         max_iter,
         tol,
+        err_type="displacement",
         pfactor=1e12,
         p0=None,
     ):
@@ -26,7 +26,7 @@ class CCG:
         error_history = np.zeros((self.max_iter, 3))
 
         if self.p0 is not None:
-            p = self.p0
+            p = np.full_like(ub, self.p0)
         else:
             p = np.zeros_like(ub)
             p = np.maximum(-self.g, 0) * self.pfactor

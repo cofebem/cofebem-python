@@ -891,7 +891,7 @@ comm = MPI.COMM_WORLD
 cube, _, _ = gmshio.read_from_msh("./msh_files/cube_tetra.msh", comm, 0, gdim=3)
 hemisphere, _, _ = gmshio.read_from_msh("./msh_files/hemisphere1.msh", comm, 0, gdim=3)
 
-dz = 1.8
+dz = 1.9
 hemisphere.geometry.x[:, 0] *= -1.0
 hemisphere.geometry.x[:, 2] *= -1.0
 hemisphere.geometry.x[:, 2] += float(dz)
