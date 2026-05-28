@@ -5,7 +5,6 @@ from petsc4py import PETSc
 from dolfinx.fem import locate_dofs_topological, form
 from dolfinx.fem.petsc import (
     assemble_matrix,
-    assemble_matrix_mat,
     assemble_vector,
     apply_lifting,
 )
@@ -97,7 +96,7 @@ class Contact:
 
     def build_Sc(self):
         self.problem._A.zeroEntries()
-        assemble_matrix_mat(self.problem._A, self.problem._a, bcs=self.problem.bcs)
+        assemble_matrix(self.problem._A, self.problem._a, bcs=self.problem.bcs)
         self.problem._A.assemble()
 
         with self.problem._b.localForm() as b_loc:

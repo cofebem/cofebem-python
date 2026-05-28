@@ -3,7 +3,7 @@ from mpi4py import MPI
 from petsc4py import PETSc
 
 from dolfinx.mesh import locate_entities_boundary, meshtags
-from dolfinx.io import gmshio, VTKFile
+from dolfinx.io import gmsh, VTKFile
 from dolfinx.fem import (
     Constant,
     Function,
@@ -13,7 +13,7 @@ from dolfinx.fem import (
 )
 from dolfinx.fem.petsc import (
     LinearProblem,
-    assemble_matrix_mat,
+    assemble_matrix,
     assemble_vector,
     apply_lifting,
 )
@@ -37,7 +37,6 @@ from cofebem.contact.Sc_normal import Sc_normal
 from cofebem.contact.lcp_solvers.lemke import lemkelcp
 
 import meshio
-
 
 # ============================================================
 # Geometry helpers
@@ -580,6 +579,7 @@ def build_contact_normals(
     LinearProblem(
         a=a,
         L=L,
+        petsc_options_prefix="nrm",
         u=normal_field,
         bcs=[],
         petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
@@ -642,12 +642,13 @@ def build_system(mesh, E=1.0e9, nu=0.3, Gamma_u_locator=None):
     problem = LinearProblem(
         a=a,
         L=Lform,
+        petsc_options_prefix="body",
         bcs=bcs,
         petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
     )
 
     problem._A.zeroEntries()
-    assemble_matrix_mat(problem._A, problem._a, bcs=problem.bcs)
+    assemble_matrix(problem._A, problem._a, bcs=problem.bcs)
     problem._A.assemble()
 
     with problem._b.localForm() as b_loc:
@@ -888,10 +889,10 @@ def export_gap_method_vtk(
 comm = MPI.COMM_WORLD
 
 # ---------------- Meshes ----------------
-cube, _, _ = gmshio.read_from_msh("./msh_files/cube_tetra.msh", comm, 0, gdim=3)
-hemisphere, _, _ = gmshio.read_from_msh("./msh_files/hemisphere1.msh", comm, 0, gdim=3)
+cube = gmsh.read_from_msh("./msh_files/cube_tetra.msh", comm, 0, gdim=3).mesh
+hemisphere = gmsh.read_from_msh("./msh_files/hemisphere1.msh", comm, 0, gdim=3).mesh
 
-dz = 1.9
+dz = 1.7
 hemisphere.geometry.x[:, 0] *= -1.0
 hemisphere.geometry.x[:, 2] *= -1.0
 hemisphere.geometry.x[:, 2] += float(dz)
@@ -949,7 +950,7 @@ hemi_fdim = hemi_tdim - 1
 
 
 def hemi_Gamma_c_locator(x):
-    return (x[2] > dz - 1.0) & (x[2] < dz - 0.05)
+    return x[2] < dz - 0.05
 
 
 hemi_Gamma_c = locate_entities_boundary(hemisphere, hemi_fdim, hemi_Gamma_c_locator)

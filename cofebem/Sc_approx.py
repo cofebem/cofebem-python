@@ -420,13 +420,17 @@ def solve_contact_fc(S, gap, max_iter=5000, tol=1e-10):
         return fc, w, {"solver": "lemke", "code": code, "msg": msg}
 
     fc, w, its, history = psor_lcp(S, gap, omega=1.1, tol=tol, max_iter=max_iter)
-    return fc, w, {
-        "solver": "psor",
-        "code": code,
-        "msg": msg,
-        "iterations": its,
-        "residual": history[-1] if history else np.nan,
-    }
+    return (
+        fc,
+        w,
+        {
+            "solver": "psor",
+            "code": code,
+            "msg": msg,
+            "iterations": its,
+            "residual": history[-1] if history else np.nan,
+        },
+    )
 
 
 def set_contact_field(fn, Ic, nrm, values, tdim, absolute=False):
@@ -699,6 +703,7 @@ ax.set_xlabel("Singular value index")
 ax.set_ylabel("Singular value")
 ax.grid(True, which="both", linestyle="--", alpha=0.5)
 ax.legend()
+plt.show()
 
 fig_err, ax_err = plt.subplots(figsize=(8, 5), constrained_layout=True)
 ax_err.plot(
@@ -724,6 +729,8 @@ contact_results = run_contact_comparison(
     approximations=approximations,
     x=xc,
 )
+
+plt.show()
 
 fig_fc, ax_fc = plt.subplots(figsize=(8, 5), constrained_layout=True)
 for case_name, records in contact_results.items():

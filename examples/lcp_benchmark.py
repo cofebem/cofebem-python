@@ -22,7 +22,6 @@ from cofebem.contact.lcp_solvers.lemke import lemkelcp
 from cofebem.contact.lcp_solvers.psor import psor_lcp
 from cofebem.fenics.contact import Sc
 
-
 errors_nnls = []
 errors_ccg = []
 errors_lemke = []
@@ -133,6 +132,7 @@ for k in k_values:
     problem = LinearProblem(
         a,
         L,
+        petsc_options_prefix="prb_",
         bcs=bcs,
         petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
     )
@@ -234,9 +234,9 @@ plt.semilogy(
 plt.semilogy(
     contact_sizes, errors_psor, "d-", linewidth=2, markersize=7, label="PSOR vs Lemke"
 )
-plt.semilogy(
-    contact_sizes, errors_lemke, "^-", linewidth=2, markersize=7, label="Lemke vs Lemke"
-)
+# plt.semilogy(
+#     contact_sizes, errors_lemke, "^-", linewidth=2, markersize=7, label="Lemke vs Lemke"
+# )
 plt.grid(True, which="both", linestyle="--", alpha=0.7)
 plt.xlabel("Number of contact DOFs", fontsize=12)
 plt.ylabel("Relative error", fontsize=12)

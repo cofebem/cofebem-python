@@ -8,9 +8,9 @@ R  = 5;           // radius of the indentation zone
 Rm = 8;           // radius of the mesh density change
 
 // ---- mesh parameters ---------
-hMin = 0.16384;      // finest size 
-hMed = 2.62144;      // intermediate size
-hMax = 3.93216;      // coarsest size 
+hMin = 0.12288;      // finest size 
+hMed = 1.966;      // intermediate size
+hMax = 2.94912;      // coarsest size 
 
 Point(1) = {0,0,0,hMax};
 Point(2) = {L,0,0,hMax};
