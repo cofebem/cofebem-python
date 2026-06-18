@@ -757,29 +757,29 @@ Sc_Kelvin_source = Sc_Kelvin_source_integrated(
     show=True,
 )
 
-Sc_Kelvin_double = Sc_Kelvin_double_integrated(
-    mesh=cube,
-    facet_ids=cube_Gamma_c,
-    contact_vertex_ids=cube_Ic,
-    normals=cube_normals,
-    E=1e9,
-    nu=0.3,
-    nq=4,
-    nq_self=6,
-    show=True,
-)
+# Sc_Kelvin_double = Sc_Kelvin_double_integrated(
+#     mesh=cube,
+#     facet_ids=cube_Gamma_c,
+#     contact_vertex_ids=cube_Ic,
+#     normals=cube_normals,
+#     E=1e9,
+#     nu=0.3,
+#     nq=4,
+#     nq_self=6,
+#     show=True,
+# )
 
 R_point = Sc_FE - Sc_Kelvin_point
 R_source = Sc_FE - Sc_Kelvin_source
-R_double = Sc_FE - Sc_Kelvin_double
+# R_double = Sc_FE - Sc_Kelvin_double
 
 _, s_FE, _ = np.linalg.svd(Sc_FE)
 _, s_Kelvin_point, _ = np.linalg.svd(Sc_Kelvin_point)
 _, s_Kelvin_source, _ = np.linalg.svd(Sc_Kelvin_source)
-_, s_Kelvin_double, _ = np.linalg.svd(Sc_Kelvin_double)
+# _, s_Kelvin_double, _ = np.linalg.svd(Sc_Kelvin_double)
 _, s_R_point, _ = np.linalg.svd(R_point)
 _, s_R_source, _ = np.linalg.svd(R_source)
-_, s_R_double, _ = np.linalg.svd(R_double)
+# _, s_R_double, _ = np.linalg.svd(R_double)
 
 fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
 
@@ -843,35 +843,35 @@ axes[1].set_ylabel("Singular value")
 axes[1].grid(True, which="both", linestyle="--", alpha=0.5)
 axes[1].legend()
 
-axes[2].semilogy(
-    np.arange(1, len(s_FE) + 1),
-    s_FE,
-    marker="o",
-    markersize=4,
-    linewidth=1.8,
-    label=r"$S_c^{FE}$",
-)
-axes[2].semilogy(
-    np.arange(1, len(s_Kelvin_double) + 1),
-    s_Kelvin_double,
-    marker="s",
-    markersize=4,
-    linewidth=1.8,
-    label=r"$S_c^{Kelvin,double}$",
-)
-axes[2].semilogy(
-    np.arange(1, len(s_R_double) + 1),
-    s_R_double,
-    marker="^",
-    markersize=4,
-    linewidth=1.8,
-    label=r"$S_c^{FE}-S_c^{Kelvin,double}$",
-)
-axes[2].set_title("Double integrated Kelvin")
-axes[2].set_xlabel("Singular value index")
-axes[2].set_ylabel("Singular value")
-axes[2].grid(True, which="both", linestyle="--", alpha=0.5)
-axes[2].legend()
+# axes[2].semilogy(
+#     np.arange(1, len(s_FE) + 1),
+#     s_FE,
+#     marker="o",
+#     markersize=4,
+#     linewidth=1.8,
+#     label=r"$S_c^{FE}$",
+# )
+# axes[2].semilogy(
+#     np.arange(1, len(s_Kelvin_double) + 1),
+#     s_Kelvin_double,
+#     marker="s",
+#     markersize=4,
+#     linewidth=1.8,
+#     label=r"$S_c^{Kelvin,double}$",
+# )
+# axes[2].semilogy(
+#     np.arange(1, len(s_R_double) + 1),
+#     s_R_double,
+#     marker="^",
+#     markersize=4,
+#     linewidth=1.8,
+#     label=r"$S_c^{FE}-S_c^{Kelvin,double}$",
+# )
+# axes[2].set_title("Double integrated Kelvin")
+# axes[2].set_xlabel("Singular value index")
+# axes[2].set_ylabel("Singular value")
+# axes[2].grid(True, which="both", linestyle="--", alpha=0.5)
+# axes[2].legend()
 
 plt.show()
 
@@ -879,10 +879,10 @@ print("\n--- Frobenius norms ---")
 print("||Sc_FE||F                 =", np.linalg.norm(Sc_FE, "fro"))
 print("||Sc_Kelvin_point||F       =", np.linalg.norm(Sc_Kelvin_point, "fro"))
 print("||Sc_Kelvin_source||F      =", np.linalg.norm(Sc_Kelvin_source, "fro"))
-print("||Sc_Kelvin_double||F      =", np.linalg.norm(Sc_Kelvin_double, "fro"))
+# print("||Sc_Kelvin_double||F      =", np.linalg.norm(Sc_Kelvin_double, "fro"))
 print("||R_point||F               =", np.linalg.norm(R_point, "fro"))
 print("||R_source||F              =", np.linalg.norm(R_source, "fro"))
-print("||R_double||F              =", np.linalg.norm(R_double, "fro"))
+# print("||R_double||F              =", np.linalg.norm(R_double, "fro"))
 
 print("\n--- Relative residuals ---")
 print(
@@ -893,10 +893,10 @@ print(
     "source integrated          =",
     np.linalg.norm(R_source, "fro") / np.linalg.norm(Sc_FE, "fro"),
 )
-print(
-    "double integrated          =",
-    np.linalg.norm(R_double, "fro") / np.linalg.norm(Sc_FE, "fro"),
-)
+# print(
+#     "double integrated          =",
+#     np.linalg.norm(R_double, "fro") / np.linalg.norm(Sc_FE, "fro"),
+# )
 
 print("\n--- Diagonal min/max ---")
 print("FE                         :", np.min(np.diag(Sc_FE)), np.max(np.diag(Sc_FE)))
@@ -910,8 +910,8 @@ print(
     np.min(np.diag(Sc_Kelvin_source)),
     np.max(np.diag(Sc_Kelvin_source)),
 )
-print(
-    "Kelvin double integrated   :",
-    np.min(np.diag(Sc_Kelvin_double)),
-    np.max(np.diag(Sc_Kelvin_double)),
-)
+# print(
+#     "Kelvin double integrated   :",
+#     np.min(np.diag(Sc_Kelvin_double)),
+#     np.max(np.diag(Sc_Kelvin_double)),
+# )

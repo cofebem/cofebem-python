@@ -11,7 +11,7 @@ from dolfinx.fem import (
     locate_dofs_topological,
 )
 from dolfinx.fem.petsc import LinearProblem
-from dolfinx.io import gmshio, VTKFile
+from dolfinx.io import gmsh, VTKFile
 
 from ufl import Identity, Measure, TrialFunction, TestFunction, sym, grad, inner, tr, dx
 
@@ -119,7 +119,7 @@ L += inner(t0, v) * ds(Gamma_t_id) + inner(tc, v) * ds(Gamma_c_id)
 
 # ---------------- Setup problem ----------------
 problem = LinearProblem(
-    a, L, bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
+    a, L, bcs=bcs, petsc_options_prefix = "le",petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
 )
 
 problem.u.name = "u"
@@ -148,9 +148,9 @@ contact = Contact(
 n_frames = 40
 xcs = np.linspace(R, l - R, n_frames)
 
-cylinder_mesh, _, _ = gmshio.read_from_msh(
+cylinder_mesh, _, _ = gmsh.read_from_msh(
     "./msh_files/cylinder.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
 cylinder_ref_x = cylinder_mesh.geometry.x[:, :3].copy()
 X = cylinder_ref_x.copy()

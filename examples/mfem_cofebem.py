@@ -68,15 +68,13 @@ def main():
     a.FormLinearSystem(ess_tdof_list, x, b, A, X, B)
 
     A_mfem = mfem.OperatorHandle2SparseMatrix(A)
+    print(A_mfem)
     A_bc = mfem_sparse_to_scipy(A_mfem)
 
     print("Constrained system matrix A after Dirichlet elimination:")
     print("  shape =", A_bc.shape)
     print("  nnz   =", A_bc.nnz)
 
-    # -----------------------------
-    # Solve A X = B
-    # -----------------------------
     smoother = mfem.GSSmoother(A_mfem)
 
     mfem.PCG(
@@ -92,11 +90,11 @@ def main():
 
     a.RecoverFEMSolution(X, b, x)
 
-    x.Save("u.gf")
-    mesh.Print("mesh.mesh")
+    # x.Save("u.gf")
+    # mesh.Print("mesh.mesh")
 
-    print("Solution saved to u.gf")
-    print("Mesh saved to mesh.mesh")
+    # print("Solution saved to u.gf")
+    # print("Mesh saved to mesh.mesh")
 
 
 if __name__ == "__main__":

@@ -338,7 +338,7 @@ def dmat(x):
 
 comm = MPI.COMM_WORLD
 
-nx, ny = 10, 10
+nx, ny = 5, 10
 
 mesh = create_rectangle(
     comm,
@@ -386,11 +386,11 @@ xc = mesh.geometry.x[Ic]
 Nc = len(xc)
 Sc = Sc_n(A, Ic, nrm, tdim, show=True)
 
-plt.imshow(np.log(np.abs(Sc)), aspect="equal", cmap="viridis")
-plt.axis("off")
-plt.tight_layout()
-plt.savefig("heatmap_Sc.png", dpi=500)
-plt.show()
+# plt.imshow(np.log(np.abs(Sc)), aspect="equal", cmap="viridis")
+# plt.axis("off")
+# plt.tight_layout()
+# plt.savefig("heatmap_Sc.png", dpi=500)
+# plt.show()
 # J_loc = [0, 2]
 J_loc = [0, int(nx / 2)]
 J_glob = Ic[J_loc]
@@ -483,8 +483,8 @@ S11 = w0 * Sc_tilde[0, 0] + w2 * Sc_tilde[mid, mid]
 print(w0, w2)
 print(f"err_weight_dist at (1,1)= {np.abs(S11-Sc[1,1])/np.abs(Sc[1,1])}")
 
-print(Sc[0, 0], Sc[1, 1], Sc[mid, mid])
-print(S11)
+# print(Sc[0, 0], Sc[1, 1], Sc[mid, mid])
+# print(S11)
 
 # print(Sc[1, 3], Sc[0, 2], Sc[2, 4])
 # print(Sc_tilde[1, 3], Sc_tilde[0, 2], Sc_tilde[2, 4])
@@ -492,7 +492,7 @@ print(S11)
 # print(w02, w24)
 # print(f"err_weight_dist at (1,3)= {np.abs(S13-Sc[1,3])/np.abs(Sc[1,3])}")
 np.set_printoptions(precision=3, suppress=True)
-print(Sc * 1.0e11)
+# print(Sc * 1.0e11)
 
 
 # --- S13 estimation using interpolated logarithmic models ---
@@ -625,11 +625,11 @@ xg = xg[ids]
 u_plot = u_ring_force[ids]
 
 print("--------------------uniform pressure/force interpol--------------")
-# w0 = (u_ring_force[1] - u_ring_force[mid]) / (u_ring_force[0] - u_ring_force[mid])
-# w2 = 1 - w0
-# S11 = w0 * Sc_tilde[0, 0] + w2 * Sc_tilde[mid, mid]
-# print(w0, w2)
-# print(f"err_weight_dist force at (1,1)= {np.abs(S11-Sc[1,1])/np.abs(Sc[1,1])}")
+w0 = (u_ring_force[1] - u_ring_force[mid]) / (u_ring_force[0] - u_ring_force[mid])
+w2 = 1 - w0
+S11 = w0 * Sc_tilde[0, 0] + w2 * Sc_tilde[mid, mid]
+print(w0, w2)
+print(f"err_weight_dist force at (1,1)= {np.abs(S11-Sc[1,1])/np.abs(Sc[1,1])}")
 
 # print(Sc[0, 0], Sc[1, 1], Sc[mid, mid])
 # print(S11)

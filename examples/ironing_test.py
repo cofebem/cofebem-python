@@ -11,7 +11,7 @@ from dolfinx.fem import (
     locate_dofs_topological,
 )
 from dolfinx.fem.petsc import LinearProblem
-from dolfinx.io import gmshio, VTKFile, VTXWriter
+from dolfinx.io import gmsh, VTKFile, VTXWriter
 
 from ufl import Identity, Measure, TrialFunction, TestFunction, sym, grad, inner, tr, dx
 
@@ -119,7 +119,7 @@ L += inner(t0, v) * ds(Gamma_t_id) + inner(tc, v) * ds(Gamma_c_id)
 
 # ---------------- Setup problem ----------------
 problem = LinearProblem(
-    a, L, bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
+    a, L, bcs=bcs, petsc_options_prefix="le", petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
 )
 
 problem.u.name = "u"
@@ -145,9 +145,9 @@ contact = Contact(
 n_frames = 40
 xcs = np.linspace(R, l - R, n_frames)
 
-sphere_mesh, _, _ = gmshio.read_from_msh(
+sphere_mesh = gmshio.read_from_msh(
     "./msh_files/fine_sphere.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
 sphere_ref_x = sphere_mesh.geometry.x[:, :3].copy()
 V_sphere = functionspace(sphere_mesh, ("Lagrange", 1))

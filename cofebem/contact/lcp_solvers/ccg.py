@@ -43,7 +43,8 @@ class CCG:
                 t[p > 0] = w[p > 0] + d * error / error_ * t_[p > 0]
                 t[p <= 0] = 0
             q = np.inner(self.Sc, t)
-            tau = np.inner(w, t) / np.inner(t, q)
+            tau = np.inner(w, t) / np.inner(t, q)  # optimal step for CG
+
             p = p - tau * t
             p = np.maximum(p, 0)
             zero_pressure = np.where(p == 0)[0]

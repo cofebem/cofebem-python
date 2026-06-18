@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
 from mpi4py import MPI
-from dolfinx.io import gmshio, VTKFile
+from dolfinx.io import gmsh, VTKFile
 from dolfinx.fem import functionspace, Function
 from dolfinx.mesh import locate_entities_boundary
 from dolfinx.fem import locate_dofs_topological
@@ -60,21 +60,21 @@ def p_love_fit_model_fixed_a(r, p0, a, eps=1e-12):
 # ------------------------------------------------------------
 # Load meshes and compliance matrices
 # ------------------------------------------------------------
-mesh0, _, _ = gmshio.read_from_msh(
+mesh0= gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz0.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh1, _, _ = gmshio.read_from_msh(
+).mesh
+mesh1 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz1.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh2, _, _ = gmshio.read_from_msh(
+).mesh
+mesh2 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz2.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh3, _, _ = gmshio.read_from_msh(
+).mesh
+mesh3 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz3.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh4, _, _ = gmshio.read_from_msh(
+).mesh
+mesh4 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz4.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 meshes = [mesh0, mesh1, mesh2, mesh3, mesh4]
 
 Sc_dense0 = np.load("Sc_smart0.npy")

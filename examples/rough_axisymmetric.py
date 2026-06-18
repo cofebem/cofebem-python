@@ -20,7 +20,7 @@ from mpi4py import MPI
 from petsc4py import PETSc
 from tqdm import tqdm
 
-from dolfinx.io import XDMFFile, VTKFile, gmshio
+from dolfinx.io import XDMFFile, VTKFile, gmsh
 import mpi4py.MPI as MPI
 
 from cofebem.mesh.wrinkly_tyre import rough_hollow_cylinder
@@ -119,7 +119,7 @@ bc = dirichletbc(
 #  Setup the Problem
 # -------------------------------------------------------------------------------------------------------
 problem = LinearProblem(
-    a=a(u, v), L=L(v), bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
+    a=a(u, v), L=L(v), bcs=[bc], petsc_options_prefix="le", petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
 )
 
 problem.solve()
@@ -308,9 +308,9 @@ u_fenics.name = "u"
 
 indenter = Plane(point=np.array([0, 0, 0]))
 
-plane_mesh, _, _ = gmshio.read_from_msh(
+plane_mesh = gmsh.read_from_msh(
     "./msh_files/ground.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
 plane_ref_x = plane_mesh.geometry.x[:, :3].copy()
 V_plane = functionspace(plane_mesh, ("Lagrange", 1))

@@ -25,7 +25,7 @@ from ufl import (
     tr,
     dx,
 )
-from dolfinx.io import VTKFile, gmshio
+from dolfinx.io import VTKFile, gmsh
 
 from mpi4py import MPI
 from petsc4py import PETSc
@@ -50,13 +50,13 @@ from cofebem.contact.lcp_solvers.lemke import lemkelcp
 # W = 40.0
 # H = 20.0
 
-# mesh0, cell_tags0, facet_tags0 = gmshio.read_from_msh(
+# mesh0 = gmsh.read_from_msh(
 #     "./cofebem/mesh/smart_Hertz4.msh", MPI.COMM_WORLD, 0, gdim=3
-# )
+# ).mesh
 
-# mesh1, cell_tags1, facet_tags1 = gmshio.read_from_msh(
+# mesh1 = gmsh.read_from_msh(
 #     "hertz_cube_1.msh", MPI.COMM_WORLD, 0, gdim=3
-# )
+# ).mesh
 
 
 # tdim = mesh0.topology.dim
@@ -174,25 +174,25 @@ from cofebem.contact.lcp_solvers.lemke import lemkelcp
 # # Compare with Hertz solution
 # # -------------------------------------------------------------------------------------------------------
 
-mesh0, _, _ = gmshio.read_from_msh(
+mesh0= gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz0.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
-mesh1, _, _ = gmshio.read_from_msh(
+mesh1 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz1.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
-mesh2, _, _ = gmshio.read_from_msh(
+mesh2 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz2.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
-mesh3, _, _ = gmshio.read_from_msh(
+mesh3 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz3.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
-mesh4, _, _ = gmshio.read_from_msh(
+mesh4 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz4.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
 meshes = [mesh0, mesh1, mesh2, mesh3, mesh4]
 
@@ -279,7 +279,7 @@ def hertz_vs_cofebem(meshes, Scs):
         p0_ = np.maximum(-g, 0) * 1e16
 
         p_lemke, _, err_hist = CCG(
-            Sc_dense, "displacement", g, max_iter, 1e-5, p0=p0_
+            Sc_dense, g, max_iter, 1e-5, p0=p0_
         ).solve()
         # p_lemke, _, _ = lemkelcp(Sc_dense, g, max_iter)
         # for i, (x, y, z) in enumerate(err_hist):

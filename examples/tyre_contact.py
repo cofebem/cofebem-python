@@ -21,7 +21,7 @@ from ufl import (
     tr,
     dx,
 )
-from dolfinx.io import XDMFFile, gmshio
+from dolfinx.io import XDMFFile, gmsh
 
 from mpi4py import MPI
 from petsc4py import PETSc
@@ -222,7 +222,7 @@ L += inner(t0, v) * ds(Gamma_t_id) + inner(tc, v) * ds(Gamma_c_id)
 
 # ---------------- Setup problem ----------------
 problem = LinearProblem(
-    a, L, bcs=bcs, petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
+    a, L, bcs=bcs, petsc_options_prefix="le", petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
 )
 
 problem.u.name = "u"
@@ -330,9 +330,9 @@ indenter = Plane(center, normal)
 contact = Contact(mesh, indenter, tc, Gamma_c, ds, Gamma_c_id, problem, solver="lemke")
 
 
-plane_mesh, _, _ = gmshio.read_from_msh(
+plane_mesh = gmsh.read_from_msh(
     "./msh_files/ground.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
 plane_ref_x = plane_mesh.geometry.x[:, :3].copy()
 X = plane_ref_x.copy()

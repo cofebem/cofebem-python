@@ -172,26 +172,26 @@ if __name__ == "__main__":
     #     xdmf.write_mesh(msh)
     #     xdmf.write_function(normal_fn)
 
-    # import numpy as np
+    import numpy as np
 
-    # def z(t):
-    #     return (1 - t) * 1j * np.pi
+    def z(t):
+        return (1 - t) * 1j * np.pi
 
-    # def dz_dt(t):
-    #     return -1j * np.pi
+    def dz_dt(t):
+        return -1j * np.pi
 
-    # def f(z):
-    #     return np.exp(-z)
+    def f(z):
+        return np.exp(-z)
 
-    # a, b = 0, 1
-    # N = 1000  # number of subdivisions
-    # ts = np.linspace(a, b, N)
+    a, b = 0, 1
+    N = 1000  # number of subdivisions
+    ts = np.linspace(a, b, N)
 
-    # integrand = f(z(ts)) * dz_dt(ts)
+    integrand = f(z(ts)) * dz_dt(ts)
 
-    # integral = np.trapz(integrand, ts)
+    integral = np.trapz(integrand, ts)
 
-    # print("Numerical contour integral:", np.real(integral))
+    print("Numerical contour integral:", np.real(integral))
 
     # from mpi4py import MPI
     # import dolfinx

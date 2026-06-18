@@ -22,7 +22,6 @@ from dolfinx.fem import (
 )
 from dolfinx.fem.petsc import NonlinearProblem
 
-
 comm = MPI.COMM_WORLD
 
 if comm.size != 1:
@@ -47,7 +46,7 @@ nu = 0.3
 kpen = 1.0e12
 
 R = 0.35
-delta_final = 0.02
+delta_final = 0.1
 nsteps = 10
 
 
@@ -202,9 +201,9 @@ bc = dirichletbc(uD, dofs_D, V)
 petsc_options = {
     "snes_type": "newtonls",
     "snes_linesearch_type": "bt",
-    "snes_atol": 1e-8,
-    "snes_rtol": 1e-8,
-    "snes_max_it": 40,
+    "snes_atol": 1e-3,
+    "snes_rtol": 1e-4,
+    "snes_max_it": 100,
     "snes_monitor": None,
     "ksp_type": "preonly",
     "pc_type": "lu",

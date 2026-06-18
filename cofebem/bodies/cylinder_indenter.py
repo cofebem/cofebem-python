@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from mpi4py import MPI
-from dolfinx.io import gmshio, VTKFile
+from dolfinx.io import gmsh, VTKFile
 from dolfinx.fem import functionspace, Function
 from dolfinx.mesh import locate_entities_boundary
 from dolfinx.fem import locate_dofs_topological
@@ -62,21 +62,21 @@ def p_flat_punch_popov(r, a, E_star, d, eps=1e-14):
 # Load meshes and compliance matrices (same as you had)
 # ------------------------------------------------------------
 
-mesh0, _, _ = gmshio.read_from_msh(
+mesh0 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz0.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh1, _, _ = gmshio.read_from_msh(
+).mesh
+mesh1 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz1.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh2, _, _ = gmshio.read_from_msh(
+).mesh
+mesh2 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz2.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh3, _, _ = gmshio.read_from_msh(
+).mesh
+mesh3 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz3.msh", MPI.COMM_WORLD, 0, gdim=3
-)
-mesh4, _, _ = gmshio.read_from_msh(
+).mesh
+mesh4 = gmsh.read_from_msh(
     "./cofebem/mesh/smart_Hertz4.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 meshes = [mesh0, mesh1, mesh2, mesh3, mesh4]
 
 Sc_dense0 = np.load("Sc_smart0.npy")
@@ -137,6 +137,7 @@ def flat_punch_vs_cofebem(meshes, Scs):
     h_max = np.array([12.0, 9.6, 7.68, 6.144, 4.9152])
 
     for i, mesh in enumerate(meshes):
+
         V = functionspace(mesh, (element_type, element_degree, (tdim,)))
 
         Gamma_c = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_c_selector)

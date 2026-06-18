@@ -22,3 +22,5 @@ dist/
 *.err
 *.out
 *.tmp
+*.png 
+*.csv
