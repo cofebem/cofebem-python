@@ -1,7 +1,6 @@
 import numpy as np
 import meshio
 
-
 # def trimmed_ellipse_arc(a, b, ox, oz, theta_cut, ntt=60):
 #     t0 = np.linspace(0.0, 2.0 * np.pi, ntt, endpoint=False)
 #     mask = ((t0 >= 0.0) & (t0 <= np.pi + theta_cut)) | (
@@ -141,17 +140,17 @@ def tyre_hex_mesh(
     )
 
 
-if __name__ == "__main__":
-    tyre_hex_mesh(
-        a=0.20,
-        b=0.10,
-        t=0.03,
-        ox=0.0,
-        oz=0.5,
-        theta_cut=np.pi / 6,
-        nr=3,
-        ntt=40,
-        npp=80,
-        filename="tyre_hex.xdmf",
-        periodic_phi=True,
-    )
+# if __name__ == "__main__":
+#     tyre_hex_mesh(
+#         a=0.20,
+#         b=0.10,
+#         t=0.03,
+#         ox=0.0,
+#         oz=0.5,
+#         theta_cut=np.pi / 6,
+#         nr=3,
+#         ntt=40,
+#         npp=80,
+#         filename="tyre_hex.xdmf",
+#         periodic_phi=True,
+#     )

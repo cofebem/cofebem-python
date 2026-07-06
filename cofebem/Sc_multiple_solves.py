@@ -6,7 +6,7 @@ from dolfinx.mesh import locate_entities_boundary, create_box, CellType
 from dolfinx.fem import Constant, functionspace, dirichletbc, locate_dofs_topological
 from dolfinx.fem.petsc import (
     LinearProblem,
-    assemble_matrix_mat,
+    assemble_matrix,
     assemble_vector,
     apply_lifting,
 )
@@ -75,12 +75,13 @@ problem = LinearProblem(
     a=a,
     L=Lform,
     bcs=bcs,
+    petsc_options_prefix= "pb",
     petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
 )
 
 # ---------------- Assemble system ----------------
 problem._A.zeroEntries()
-assemble_matrix_mat(problem._A, problem._a, bcs=problem.bcs)
+assemble_matrix(problem._A, problem._a, bcs=problem.bcs)
 problem._A.assemble()
 
 with problem._b.localForm() as b_loc:
