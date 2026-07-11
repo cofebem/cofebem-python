@@ -139,6 +139,8 @@ def tyre_hex_mesh(
         f"  params = a={a}, b={b}, t={t}, ox={ox}, oz={oz}, theta_cut={theta_cut}, ntt={ntt}"
     )
 
+    return ns
+
 
 # if __name__ == "__main__":
 #     tyre_hex_mesh(
