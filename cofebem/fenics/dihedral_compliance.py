@@ -10,6 +10,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 from mpi4py import MPI
@@ -35,6 +36,136 @@ class SectorOrdering:
     @property
     def n_axial(self) -> int:
         return int(self.scalar_dofs.shape[1])
+
+
+class FactorizedComplianceOperator:
+    """Apply contact compliance through a reusable factorized FE solve.
+
+    The operator maps nodal forces at ``force_dofs`` to displacements at
+    ``response_dofs`` by solving ``A u = f`` with an already configured KSP.
+    It is intended for serial direct-factorization workflows. No compliance
+    matrix or H-matrix is constructed or stored.
+    """
+
+    def __init__(
+        self,
+        A: PETSc.Mat,
+        ksp: PETSc.KSP,
+        force_dofs: np.ndarray,
+        response_dofs: np.ndarray | None = None,
+        *,
+        symmetric: bool = True,
+    ) -> None:
+        if A.comm.size != 1:
+            raise NotImplementedError(
+                "FactorizedComplianceOperator is currently serial"
+            )
+        force = np.asarray(force_dofs, dtype=np.int32).reshape(-1)
+        response = (
+            force.copy()
+            if response_dofs is None
+            else np.asarray(response_dofs, dtype=np.int32).reshape(-1)
+        )
+        if force.size == 0 or response.size == 0:
+            raise ValueError("force_dofs and response_dofs must not be empty")
+        matrix_rows, matrix_columns = A.getSize()
+        if matrix_rows != matrix_columns:
+            raise ValueError("A must be square")
+        if np.any(force < 0) or np.any(force >= matrix_columns):
+            raise IndexError("force DOF outside the FE matrix")
+        if np.any(response < 0) or np.any(response >= matrix_rows):
+            raise IndexError("response DOF outside the FE matrix")
+        if np.unique(force).size != force.size:
+            raise ValueError("force_dofs must be unique")
+        if np.unique(response).size != response.size:
+            raise ValueError("response_dofs must be unique")
+
+        self.A = A
+        self.ksp = ksp
+        self.force_dofs = force.copy()
+        self.response_dofs = response.copy()
+        self.shape = (response.size, force.size)
+        self.symmetric = bool(
+            symmetric
+            and self.shape[0] == self.shape[1]
+            and np.array_equal(self.force_dofs, self.response_dofs)
+        )
+        self._rhs = A.createVecRight()
+        self._displacement = A.createVecLeft()
+        self._last_forces: np.ndarray | None = None
+        self.operator_applications = 0
+        self.linear_solves = 0
+        self.cache_hits = 0
+        self.zero_bypasses = 0
+        self.solve_seconds = 0.0
+
+    def _solve(self, forces: np.ndarray) -> None:
+        if self._last_forces is not None and np.array_equal(
+            forces, self._last_forces
+        ):
+            self.cache_hits += 1
+            return
+        if not np.any(forces):
+            self._displacement.set(0.0)
+            self.zero_bypasses += 1
+        else:
+            self._rhs.set(0.0)
+            self._rhs.setValues(
+                self.force_dofs,
+                forces,
+                addv=PETSc.InsertMode.INSERT_VALUES,
+            )
+            self._rhs.assemble()
+            start = perf_counter()
+            self.ksp.solve(self._rhs, self._displacement)
+            self.solve_seconds += perf_counter() - start
+            self.linear_solves += 1
+            if int(self.ksp.getConvergedReason()) <= 0:
+                raise RuntimeError(
+                    "Factorized FE compliance solve failed with PETSc reason "
+                    f"{self.ksp.getConvergedReason()}"
+                )
+        self._last_forces = forces.copy()
+
+    def apply(
+        self,
+        forces: np.ndarray,
+        *,
+        response_dofs: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Apply the flexibility and extract selected displacement DOFs."""
+        values = np.asarray(forces, dtype=np.float64).reshape(-1)
+        if values.shape != (self.shape[1],):
+            raise ValueError(
+                f"forces must have shape ({self.shape[1]},), got {values.shape}"
+            )
+        if not np.all(np.isfinite(values)):
+            raise ValueError("forces contain NaN or infinite values")
+        responses = (
+            self.response_dofs
+            if response_dofs is None
+            else np.asarray(response_dofs, dtype=np.int32).reshape(-1)
+        )
+        if np.any(responses < 0) or np.any(responses >= self.A.getSize()[0]):
+            raise IndexError("response DOF outside the FE matrix")
+        self.operator_applications += 1
+        self._solve(values)
+        displacement = self._displacement.getArray(readonly=True)
+        return np.array(displacement[responses], dtype=np.float64, copy=True)
+
+    def __matmul__(self, forces: np.ndarray) -> np.ndarray:
+        """Return contact displacement for one contact-force vector."""
+        return self.apply(forces)
+
+    def stats(self) -> dict[str, int | float]:
+        """Return accumulated operator and factorized-solve counters."""
+        return {
+            "operator_applications": self.operator_applications,
+            "linear_solves": self.linear_solves,
+            "cache_hits": self.cache_hits,
+            "zero_bypasses": self.zero_bypasses,
+            "solve_seconds": self.solve_seconds,
+        }
 
 
 class DihedralComplianceEntrySource(MatrixEntrySource):
@@ -503,7 +634,7 @@ def create_lu_solver(
     *,
     factor_solver_type: str | None = None,
 ) -> PETSc.KSP:
-    """Create one reusable PETSc PREONLY+LU solver for compliance sampling."""
+    """Create one reusable PETSc PREONLY+LU compliance-action solver."""
     ksp = PETSc.KSP().create(comm)
     ksp.setOperators(A)
     ksp.setType(PETSc.KSP.Type.PREONLY)

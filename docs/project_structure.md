@@ -71,8 +71,8 @@ The matching unit tests are under `tests/unit_tests/lcp`.
 - `contact_normal.py`: varying-normal prototype for curved contact surfaces.
 - `linear_problem.py`: helper for a small linear-elastic system.
 - `dihedral_compliance.py`: reference-meridian y/z sampling with one reusable
-  PETSc LU factorization and an entry source that rotates only requested
-  global-z compliance entries.
+  PETSc LU factorization, an entry source that rotates only requested global-z
+  compliance entries, and an exact factorized-FE compliance operator.
 
 These files rely on DOLFINx private `LinearProblem` attributes and require
 focused testing against the active Conda environment.
@@ -124,8 +124,10 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   reference.
 - `examples/tyre_contact.py`: arbitrary-normal adapter example.
 - `examples/tyre_dihedral_contact.py`: structured hex tyre, direct dihedral
-  H-matrix construction, and spectrally preconditioned operator PPCG solve; preferred
-  tyre-symmetry reference.
+  H-matrix or flexibility-matrix-free compliance action, and spectrally
+  preconditioned operator PPCG solve; preferred tyre-symmetry reference.
+- `examples/compare_tyre_compliance_strategies.py`: compare saved H-matrix and
+  factorized-FE runs made with the same tyre configuration.
 - `examples/generate_tyre_dihedral_mesh.py`: short editable wrapper exposing
   the axial and circumferential division counts.
 - `examples/hmat_benchmark.py`: dense compliance and H-matrix compression
@@ -148,6 +150,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   preconditioner.
 - `docs/potential_contact_zone.md`: warning-distance restriction, chunked
   full-surface certification, and candidate-zone expansion for tyre contact.
+- `docs/flexibility_matrix_free.md`: exact factorized-FE compliance action and
+  the H-matrix versus matrix-free tyre benchmark.
 - `docs/naming_conventions.md`: naming style.
 - `ScSPD.md`: mathematical note on LCP uniqueness and SPD preservation.
 - `Interpolation_idea.md`: research note, not an implemented contract.

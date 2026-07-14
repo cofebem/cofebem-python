@@ -75,13 +75,14 @@ been made MPI-safe.
 
 `examples/tyre_dihedral_contact.py` generates a full structured hexahedral tyre
 from `geo_files/geometry_v2.geo`, with configurable axial and circumferential
-divisions. It samples two transverse load directions only on one axial
-reference meridian, reconstructs the global vertical compliance using the
-tyre's discrete dihedral symmetry only when ACA requests an entry, builds a
-symmetric H-matrix directly from those queries, applies the internal inflation
-preload by linear superposition, and solves contact against the road plane
-with hierarchical matvecs. The default contact solver is projected
-preconditioned CG (`ppcg`) with a tyre-sector spectral preconditioner:
+divisions. Its default strategy samples two transverse load directions on one
+reference meridian and uses discrete dihedral symmetry to build a symmetric
+H-matrix directly from ACA entry queries. An alternative flexibility-matrix-
+free strategy applies the exact contact compliance by back-solving the already
+factorized FE stiffness during every PPCG operator application. Both apply the
+internal inflation preload by linear superposition and solve contact against
+the road plane with projected preconditioned CG (`ppcg`) and a tyre-sector
+spectral preconditioner:
 
 ```bash
 conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
@@ -92,6 +93,16 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
 
 Use `--pcg-preconditioner none` to measure the unpreconditioned projected
 method, or `--contact-solver ccg_v2` for the previous face-by-face baseline.
+Use the matrix-free strategy without sampling or storing a compliance:
+
+```bash
+conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
+  --axial-divisions 24 --circumferential-divisions 32 \
+  --compliance-strategy fe_matrix_free
+```
+
+See the [flexibility-matrix-free study](docs/flexibility_matrix_free.md) for
+the formulation, timing comparison, storage trade-off, and comparison utility.
 
 By default, the example builds and solves only the part of the tyre whose
 inflation-adjusted free gap is within `--warning-distance 0.02` of the road.
@@ -147,9 +158,11 @@ solvers consume its hierarchical matvec directly. `HMatrix.solve()` itself
 still uses dense LU and is not the contact-solve path.
 
 The direct entry-source path is exercised end to end by the dihedral tyre
-example. The generic FEniCSx `Contact.solve()` adapter remains on its legacy
-dense compliance path. See [direct symmetry construction](docs/hmatrix_symmetry.md)
-for indexing, complexity, and diagnostics.
+example. The same example can instead expose the factorized FE system as a
+matrix operator and perform no compliance construction. The generic FEniCSx
+`Contact.solve()` adapter remains on its legacy dense compliance path. See
+[direct symmetry construction](docs/hmatrix_symmetry.md) for indexing,
+complexity, and diagnostics.
 The [PPCG solver note](docs/ppcg.md) describes the projected PR+ iteration and
 the sector-spectral preconditioner.
 
@@ -157,7 +170,7 @@ the sector-spectral preconditioner.
 
 The most reliable dependency-light components are `cofebem.hmatrices` and
 `cofebem.lcp`; together with the dihedral compliance tests, their focused suite
-currently contains 301 passing tests. The
+currently contains 311 passing tests. The
 FEniCSx adapters are prototypes with important assumptions: 3D vector CG1-like
 spaces, direct PETSc solves, serial-oriented indexing, and use of private
 `LinearProblem` attributes. The architecture documentation records these

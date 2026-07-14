@@ -1,8 +1,11 @@
 import numpy as np
 import pytest
+from petsc4py import PETSc
 
 from cofebem.fenics.dihedral_compliance import (
     DihedralComplianceEntrySource,
+    FactorizedComplianceOperator,
+    create_lu_solver,
     dihedral_reflection_error,
     infer_regular_sector_shape,
     load_dihedral_compliance_archive,
@@ -12,6 +15,7 @@ from cofebem.fenics.dihedral_compliance import (
     reconstruct_vertical_compliance,
     restricted_source_clearance,
 )
+from cofebem.lcp import LCP, solve
 
 
 def test_order_contact_sectors_recovers_sector_and_axial_order():
@@ -147,6 +151,50 @@ def test_restricted_source_clearance_matches_dense_product():
         Source(), gap, indices, forces, chunk_size=2
     )
     np.testing.assert_allclose(clearance, gap + matrix[:, indices] @ forces)
+
+
+def test_factorized_compliance_operator_matches_inverse_and_caches_solution():
+    matrix = np.array(
+        [
+            [4.0, -1.0, 0.0, 0.0],
+            [-1.0, 4.0, -1.0, 0.0],
+            [0.0, -1.0, 4.0, -1.0],
+            [0.0, 0.0, -1.0, 3.0],
+        ]
+    )
+    A = PETSc.Mat().createAIJ([4, 4], comm=PETSc.COMM_SELF)
+    dofs = np.arange(4, dtype=np.int32)
+    A.setValues(dofs, dofs, matrix)
+    A.assemble()
+    ksp = create_lu_solver(A, PETSc.COMM_SELF)
+    selected = np.array([1, 3], dtype=np.int32)
+    operator = FactorizedComplianceOperator(A, ksp, selected)
+    forces = np.array([2.0, -0.5])
+    rhs = np.zeros(4)
+    rhs[selected] = forces
+    expected_full = np.linalg.solve(matrix, rhs)
+
+    np.testing.assert_allclose(operator @ forces, expected_full[selected])
+    np.testing.assert_allclose(
+        operator.apply(forces, response_dofs=dofs), expected_full
+    )
+    stats = operator.stats()
+    assert stats["operator_applications"] == 2
+    assert stats["linear_solves"] == 1
+    assert stats["cache_hits"] == 1
+
+    np.testing.assert_array_equal(operator @ np.zeros(2), np.zeros(2))
+    assert operator.stats()["zero_bypasses"] == 1
+
+    dense_compliance = np.linalg.inv(matrix)[np.ix_(selected, selected)]
+    expected_pressure = np.array([1.5, 0.75])
+    result = solve(
+        LCP(operator, -(dense_compliance @ expected_pressure)),
+        method="ppcg",
+        tol=1.0e-12,
+    )
+    assert result.converged
+    np.testing.assert_allclose(result.z, expected_pressure, rtol=1.0e-9)
 
 
 def _write_compliance_archive(path, samples, points, **metadata):

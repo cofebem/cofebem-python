@@ -84,7 +84,9 @@ flowchart LR
     A[Mesh, material, Dirichlet BCs] --> B[Assemble constrained K]
     B --> C[Choose potential contact DOFs and coordinates]
     C --> D[Sample compliance with repeated PETSc solves]
+    C --> M[Factorized FE compliance operator]
     D --> E[Evaluate rigid-indenter gap g]
+    M --> E
     E --> F[Solve LCP: p >= 0, S_c p + g >= 0]
     F --> G[Boundary mass solve: nodal forces to traction]
     G --> H[Ordinary FEniCSx solve]
@@ -93,10 +95,13 @@ flowchart LR
     D --> J[Tyre reference-meridian tensor]
     J --> K[Entry oracle plus ACA-built HMatrix]
     K --> F
+    M --> F
 ```
 
-The tyre branch is direct: it never reconstructs a global dense `S_c` and PPCG
-uses hierarchical matvecs. The generic `cofebem.fenics.Contact.solve()` adapter
+The tyre H-matrix branch never reconstructs a global dense `S_c`; PPCG uses
+hierarchical matvecs. Its flexibility-matrix-free branch constructs no
+compliance representation and evaluates `S_c p` by a back-solve with the
+factorized FE stiffness. The generic `cofebem.fenics.Contact.solve()` adapter
 still uses the dense branch.
 
 ## Components
@@ -136,13 +141,24 @@ fixed road-normal direction and avoiding global dense reconstruction. The inflat
 to the undeformed road gap before solving the LCP, and inflation and contact
 loads are superposed in the final elastic solve.
 
+The same module provides `FactorizedComplianceOperator`. Given contact force
+DOFs and a reusable PETSc `PREONLY`+`LU` solver, it injects a candidate-zone
+force vector, solves the full constrained FE system, and extracts the requested
+displacements. This is the exact discrete action `R A^{-1} R^T`, up to the
+linear-solver tolerance, and requires neither symmetry sampling nor H-matrix
+storage. It is currently serial and caches its most recent full displacement
+so warning-zone certification can read all surface responses without another
+solve. See `docs/flexibility_matrix_free.md`.
+
 The tyre example further restricts the operator to nodes whose inflation-
 adjusted free gap is below a configurable warning distance. ACA sees an
 indexed principal entry-source view and therefore constructs only `S_KK` for
 the potential zone `K`. After solving, a chunked `S[:, K] @ p_K` evaluation
 checks clearance on the complete surface without storing that rectangular
-matrix. Violations are added with a sector/axial halo and the restricted solve
-is repeated. See `docs/potential_contact_zone.md`.
+matrix. In the matrix-free path, `K` instead selects the injected force DOFs
+and the cached FE displacement supplies the same global check. Violations are
+added with a sector/axial halo and the restricted solve is repeated. See
+`docs/potential_contact_zone.md`.
 
 ### Compliance construction
 

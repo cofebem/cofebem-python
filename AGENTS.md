@@ -74,7 +74,8 @@ scope of the task.
 - `cofebem/fenics/contact.py`: current flat, global-z FEniCSx contact adapter.
 - `cofebem/fenics/contact_normal.py`: current arbitrary-normal prototype.
 - `cofebem/fenics/dihedral_compliance.py`: tyre-sector ordering,
-  reference-meridian PETSc LU sampling, and road-normal reconstruction.
+  reference-meridian PETSc LU sampling, road-normal reconstruction, and the
+  factorized-FE compliance operator.
 - `cofebem/contact/Sc.py` and `Sc_normal.py`: compliance sampling from PETSc.
 - `cofebem/contact/lcp_solvers/`: legacy solver API used by the FEniCSx contact
   adapters. Preserve compatibility until the adapters migrate to
@@ -142,10 +143,12 @@ not call `to_dense()`, `lu()`, or `solve()` in a direct hierarchical workflow:
 all three intentionally assemble a global dense matrix.
 
 The maintained `cofebem.lcp` CCG and PPCG solvers accept symmetric matrix
-operators and therefore provide the hierarchical contact-solve path. PPCG
+operators and therefore provide hierarchical and factorized-FE operator-only
+contact-solve paths. PPCG
 preconditioners must be SPD after restriction to the projected free set.
 Other maintained LCP solvers require dense matrices.
-`examples/tyre_dihedral_contact.py` is the end-to-end reference; the generic
+`examples/tyre_dihedral_contact.py` is the end-to-end reference for both the
+direct H-matrix and flexibility-matrix-free operator paths; the generic
 `cofebem.fenics.Contact.solve()` adapter is still connected to the dense legacy
 path.
 

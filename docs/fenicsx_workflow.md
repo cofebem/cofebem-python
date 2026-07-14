@@ -202,7 +202,38 @@ archive provides them. This permits a changed indentation or inflation pressure
 without re-sampling. Legacy archives without material metadata are accepted
 with a warning because their elastic compatibility cannot be verified.
 
-The implementation reports sector alignment, reflection parity, sampled
+### Flexibility-matrix-free strategy
+
+The same tyre problem can be solved without constructing any compliance
+matrix or reference-meridian tensor:
+
+```bash
+conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
+  --axial-divisions 100 --circumferential-divisions 200 \
+  --indentation 1e-2 --warning-distance 2e-2 \
+  --compliance-strategy fe_matrix_free
+```
+
+PPCG then obtains every `S_c @ p` action by injecting `p` at the selected
+global-z contact DOFs and back-solving the reusable factorized stiffness. The
+warning-zone verification extracts the complete surface displacement from the
+cached last solve. `--load-compliance` and `--sampling-only` are deliberately
+rejected for this strategy because there is no compliance archive to load or
+sample.
+
+Each run writes a strategy-specific result archive,
+`contact_result_hmatrix.npz` or `contact_result_fe_matrix_free.npz`. After
+running both strategies with identical physical and discretization options,
+compare timings, active sets, forces, and clearances with:
+
+```bash
+python examples/compare_tyre_compliance_strategies.py
+```
+
+The formulation and a 100-by-200 benchmark are documented in
+[`flexibility_matrix_free.md`](flexibility_matrix_free.md).
+
+The H-matrix implementation reports sector alignment, reflection parity, sampled
 reciprocity, H-matrix storage, and entry-query counts. Symmetric H-matrix
 storage enforces reciprocity without constructing or projecting a global
 dense matrix. It is currently serial and uses one reusable PETSc

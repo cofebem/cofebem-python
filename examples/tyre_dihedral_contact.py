@@ -1,11 +1,11 @@
-"""Tyre-road contact using a directly constructed D_n-symmetric H-matrix.
+"""Tyre-road contact with H-matrix or factorized-FE compliance actions.
 
 The mesh is generated from ``geo_files/geometry_v2.geo`` as a structured full
-tyre.  Only the axial contact nodes of one reference meridian are loaded.  Two
-transverse load directions (y and z) are required to rotate the response into
-the fixed global road-normal direction correctly. ACA queries selected rows
-and columns from that sampled block; the global dense compliance is never
-constructed.
+tyre. The H-matrix strategy loads only the axial contact nodes of one reference
+meridian in two transverse directions, then answers ACA queries using dihedral
+symmetry. The flexibility-matrix-free strategy instead applies compliance by
+back-solving the factorized FE stiffness for every PPCG request. Neither path
+constructs a global dense compliance.
 
 Example
 -------
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 from mpi4py import MPI
@@ -40,6 +41,7 @@ from ufl import (
 
 from cofebem.fenics.dihedral_compliance import (
     DihedralComplianceEntrySource,
+    FactorizedComplianceOperator,
     create_lu_solver,
     dilate_sector_axial_mask,
     dihedral_reflection_error,
@@ -181,6 +183,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--poisson-ratio", type=float, default=0.48)
     parser.add_argument("--inflation-pressure", type=float, default=1.5e5)
     parser.add_argument(
+        "--compliance-strategy",
+        choices=("hmatrix", "fe_matrix_free"),
+        default="hmatrix",
+        help=(
+            "use a sampled dihedral H-matrix or apply compliance through a "
+            "factorized FE solve on every operator application"
+        ),
+    )
+    parser.add_argument(
         "--contact-solver",
         choices=("ppcg", "ccg_v2", "ccg"),
         default="ppcg",
@@ -281,6 +292,14 @@ def main() -> None:
         raise ValueError("warning-max-rounds must be positive")
     if args.warning_verification_tol <= 0.0:
         raise ValueError("warning-verification-tol must be positive")
+    if args.compliance_strategy == "fe_matrix_free" and args.load_compliance:
+        raise ValueError(
+            "--load-compliance is only valid with --compliance-strategy hmatrix"
+        )
+    if args.compliance_strategy == "fe_matrix_free" and args.sampling_only:
+        raise ValueError(
+            "--sampling-only is only valid with --compliance-strategy hmatrix"
+        )
 
     mesh_path = args.mesh.resolve()
     default_mesh_path = (
@@ -361,54 +380,80 @@ def main() -> None:
     )
 
     full_points = ordering.points.reshape(-1, 3)
-    if args.load_compliance is not None:
-        samples = load_dihedral_compliance_archive(
-            args.load_compliance,
-            full_points,
-            n_axial=ordering.n_axial,
-            n_sectors=ordering.n_sectors,
-            young_modulus=args.young_modulus,
-            poisson_ratio=args.poisson_ratio,
-        )
-        sampling_solves = 0
-        print(
-            "loaded reference compliance data from "
-            f"{args.load_compliance.expanduser().resolve()}"
-        )
-    else:
-        samples = None
-        sampling_solves = 2 * ordering.n_axial
+    strategy_start = perf_counter()
+    samples = None
+    compliance_source = None
+    compliance_load_seconds = 0.0
+    compliance_sampling_seconds = 0.0
+    sampling_solves = 0
+    if args.compliance_strategy == "hmatrix":
+        if args.load_compliance is not None:
+            start = perf_counter()
+            samples = load_dihedral_compliance_archive(
+                args.load_compliance,
+                full_points,
+                n_axial=ordering.n_axial,
+                n_sectors=ordering.n_sectors,
+                young_modulus=args.young_modulus,
+                poisson_ratio=args.poisson_ratio,
+            )
+            compliance_load_seconds = perf_counter() - start
+            print(
+                "loaded reference compliance data from "
+                f"{args.load_compliance.expanduser().resolve()}"
+            )
+        else:
+            sampling_solves = 2 * ordering.n_axial
 
+    start = perf_counter()
     ksp = create_lu_solver(
         A, comm, factor_solver_type=args.factor_solver_type
     )
+    factorization_seconds = perf_counter() - start
     inflation_displacement = A.createVecLeft()
+    start = perf_counter()
     ksp.solve(pressure_rhs, inflation_displacement)
-    if samples is None:
-        samples = sample_reference_transverse_compliance(
-            A,
-            ksp,
-            ordering,
-            show_progress=not args.no_progress,
+    inflation_solve_seconds = perf_counter() - start
+
+    if args.compliance_strategy == "hmatrix":
+        if samples is None:
+            start = perf_counter()
+            samples = sample_reference_transverse_compliance(
+                A,
+                ksp,
+                ordering,
+                show_progress=not args.no_progress,
+            )
+            compliance_sampling_seconds = perf_counter() - start
+        compliance_source = DihedralComplianceEntrySource(samples)
+        reflection_error = dihedral_reflection_error(samples)
+        reciprocity_error = compliance_source.reciprocity_error(
+            sample_size=min(4096, compliance_source.shape[0] ** 2)
         )
-    compliance_source = DihedralComplianceEntrySource(samples)
-    reflection_error = dihedral_reflection_error(samples)
-    reciprocity_error = compliance_source.reciprocity_error(
-        sample_size=min(4096, compliance_source.shape[0] ** 2)
-    )
-    print(
-        f"contact unknowns={compliance_source.shape[0]}, "
-        f"reference axial nodes={ordering.n_axial}, "
-        f"PETSc LU compliance solves={sampling_solves}"
-    )
-    print(f"maximum sector angle error={ordering.sector_angle_error:.3e} rad")
-    print(f"dihedral reflection error={reflection_error:.3e}")
-    print(f"sampled compliance reciprocity error={reciprocity_error:.3e}")
-    if reciprocity_error > 1.0e-6:
-        raise RuntimeError(
-            "Compliance reciprocity error is too large; check DOF ordering and mesh symmetry"
+        print(
+            f"contact unknowns={compliance_source.shape[0]}, "
+            f"reference axial nodes={ordering.n_axial}, "
+            f"PETSc LU compliance solves={sampling_solves}"
         )
-    compliance_source.reset_stats()
+        print(f"maximum sector angle error={ordering.sector_angle_error:.3e} rad")
+        print(f"dihedral reflection error={reflection_error:.3e}")
+        print(f"sampled compliance reciprocity error={reciprocity_error:.3e}")
+        if reciprocity_error > 1.0e-6:
+            raise RuntimeError(
+                "Compliance reciprocity error is too large; check DOF ordering "
+                "and mesh symmetry"
+            )
+        compliance_source.reset_stats()
+    else:
+        print(
+            f"contact unknowns={full_points.shape[0]}, "
+            f"reference axial nodes={ordering.n_axial}, compliance storage=none"
+        )
+        print(f"maximum sector angle error={ordering.sector_angle_error:.3e} rad")
+        print(
+            "flexibility-matrix-free strategy: every compliance action reuses "
+            "the factorized FE stiffness"
+        )
 
     output_dir = mesh_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -489,14 +534,39 @@ def main() -> None:
     initial_candidate_count = candidate_indices.size
     solve_rounds = 0
     total_iterations = 0
+    operator_build_seconds = 0.0
+    contact_solve_seconds = 0.0
+    verification_seconds = 0.0
+    h_stats = None
+    query_stats = None
+    fe_totals = {
+        "operator_applications": 0,
+        "linear_solves": 0,
+        "cache_hits": 0,
+        "zero_bypasses": 0,
+        "solve_seconds": 0.0,
+    }
     z0 = None
     while True:
         solve_rounds += 1
         print(
             f"potential-zone round {solve_rounds}: "
-            f"building {candidate_indices.size} x {candidate_indices.size} operator"
+            f"preparing {candidate_indices.size} x {candidate_indices.size} operator"
         )
-        Sc_h, h_stats, query_stats = build_potential_hmatrix(candidate_indices)
+        start = perf_counter()
+        if args.compliance_strategy == "hmatrix":
+            contact_operator, h_stats, query_stats = build_potential_hmatrix(
+                candidate_indices
+            )
+        else:
+            candidate_dofs = ordering.parent_z_dofs.ravel()[candidate_indices]
+            contact_operator = FactorizedComplianceOperator(
+                A, ksp, candidate_dofs
+            )
+            print(
+                "FE matrix-free compliance operator: 0 stored compliance entries"
+            )
+        operator_build_seconds += perf_counter() - start
         if args.sampling_only:
             break
 
@@ -514,11 +584,13 @@ def main() -> None:
                     full_spectral_preconditioner, candidate_indices
                 )
 
+        start = perf_counter()
         result = solve(
-            LCP(Sc_h, full_gap[candidate_indices]),
+            LCP(contact_operator, full_gap[candidate_indices]),
             method=args.contact_solver,
             **options,
         )
+        contact_solve_seconds += perf_counter() - start
         print(result.message)
         total_iterations += result.iterations
         if not result.converged:
@@ -532,16 +604,38 @@ def main() -> None:
         excluded[candidate_indices] = False
         if not np.any(excluded):
             full_clearance = result.w.copy()
+            if args.compliance_strategy == "fe_matrix_free":
+                for name, value in contact_operator.stats().items():
+                    fe_totals[name] += value
             break
 
-        compliance_source.reset_stats()
-        full_clearance = restricted_source_clearance(
-            compliance_source,
-            full_gap,
-            candidate_indices,
-            result.z,
-        )
-        verification_stats = compliance_source.stats()
+        start = perf_counter()
+        if args.compliance_strategy == "hmatrix":
+            compliance_source.reset_stats()
+            full_clearance = restricted_source_clearance(
+                compliance_source,
+                full_gap,
+                candidate_indices,
+                result.z,
+            )
+            verification_stats = compliance_source.stats()
+            verification_detail = (
+                f"queried entries={verification_stats['queried_entries']}"
+            )
+        else:
+            contact_displacement = contact_operator.apply(
+                result.z,
+                response_dofs=ordering.parent_z_dofs.ravel(),
+            )
+            full_clearance = full_gap + contact_displacement
+            round_fe_stats = contact_operator.stats()
+            verification_detail = (
+                f"FE linear solves={round_fe_stats['linear_solves']}, "
+                f"cache hits={round_fe_stats['cache_hits']}"
+            )
+            for name, value in round_fe_stats.items():
+                fe_totals[name] += value
+        verification_seconds += perf_counter() - start
         violations = excluded & (
             full_clearance < -args.warning_verification_tol
         )
@@ -549,7 +643,7 @@ def main() -> None:
             "full-surface verification: "
             f"minimum excluded clearance={full_clearance[excluded].min():.3e}, "
             f"violations={np.count_nonzero(violations)}, "
-            f"queried entries={verification_stats['queried_entries']}"
+            f"{verification_detail}"
         )
         if not np.any(violations):
             break
@@ -577,36 +671,38 @@ def main() -> None:
             "unknowns around verification violations"
         )
 
-    np.savez(
-        output_dir / "compliance.npz",
-        samples=samples,
-        points=full_points,
-        gap=full_gap,
-        candidate_indices=candidate_indices,
-        warning_distance=args.warning_distance,
-        potential_contact_unknowns=candidate_indices.size,
-        global_contact_unknowns=full_unknowns,
-        potential_rounds=0 if args.sampling_only else solve_rounds,
-        inflation_displacement=inflation_values,
-        inflation_pressure=args.inflation_pressure,
-        archive_format_version=3,
-        young_modulus=args.young_modulus,
-        poisson_ratio=args.poisson_ratio,
-        axial_divisions=args.axial_divisions,
-        circumferential_divisions=args.circumferential_divisions,
-        h_leaf_size=args.h_leaf_size,
-        h_eta=args.h_eta,
-        h_tolerance=args.h_tol,
-        h_max_rank=args.h_max_rank,
-        h_stored_entries=h_stats["memory_entries"],
-        h_low_rank_blocks=h_stats["low_rank"],
-        h_dense_blocks=h_stats["dense"],
-        source_queried_entries=query_stats["queried_entries"],
-    )
+    if args.compliance_strategy == "hmatrix":
+        np.savez(
+            output_dir / "compliance.npz",
+            samples=samples,
+            points=full_points,
+            gap=full_gap,
+            candidate_indices=candidate_indices,
+            warning_distance=args.warning_distance,
+            potential_contact_unknowns=candidate_indices.size,
+            global_contact_unknowns=full_unknowns,
+            potential_rounds=0 if args.sampling_only else solve_rounds,
+            inflation_displacement=inflation_values,
+            inflation_pressure=args.inflation_pressure,
+            archive_format_version=3,
+            young_modulus=args.young_modulus,
+            poisson_ratio=args.poisson_ratio,
+            axial_divisions=args.axial_divisions,
+            circumferential_divisions=args.circumferential_divisions,
+            h_leaf_size=args.h_leaf_size,
+            h_eta=args.h_eta,
+            h_tolerance=args.h_tol,
+            h_max_rank=args.h_max_rank,
+            h_stored_entries=h_stats["memory_entries"],
+            h_low_rank_blocks=h_stats["low_rank"],
+            h_dense_blocks=h_stats["dense"],
+            source_queried_entries=query_stats["queried_entries"],
+        )
     if args.sampling_only:
         print(f"saved reference compliance data to {output_dir / 'compliance.npz'}")
         return
 
+    strategy_total_seconds = perf_counter() - strategy_start
     primal_violation = max(0.0, -float(full_force.min()))
     dual_violation = max(0.0, -float(full_clearance.min()))
     complementarity = float(
@@ -616,6 +712,25 @@ def main() -> None:
         f"global primal={primal_violation:.3e}, dual={dual_violation:.3e}, "
         f"complementarity={complementarity:.3e}"
     )
+    print(
+        f"strategy timings: factorization={factorization_seconds:.3f}s, "
+        f"inflation solve={inflation_solve_seconds:.3f}s, "
+        f"compliance load={compliance_load_seconds:.3f}s, "
+        f"compliance sampling={compliance_sampling_seconds:.3f}s, "
+        f"operator build={operator_build_seconds:.3f}s, "
+        f"contact solve={contact_solve_seconds:.3f}s, "
+        f"verification={verification_seconds:.3f}s, "
+        f"total={strategy_total_seconds:.3f}s"
+    )
+    if args.compliance_strategy == "fe_matrix_free":
+        print(
+            "FE matrix-free statistics: "
+            f"operator applications={int(fe_totals['operator_applications'])}, "
+            f"linear solves={int(fe_totals['linear_solves'])}, "
+            f"cache hits={int(fe_totals['cache_hits'])}, "
+            f"zero bypasses={int(fe_totals['zero_bypasses'])}, "
+            f"linear-solve time={fe_totals['solve_seconds']:.3f}s"
+        )
 
     rhs = pressure_rhs.copy()
     displacement = A.createVecLeft()
@@ -625,7 +740,9 @@ def main() -> None:
         addv=PETSc.InsertMode.ADD_VALUES,
     )
     rhs.assemble()
+    start = perf_counter()
     ksp.solve(rhs, displacement)
+    final_solve_seconds = perf_counter() - start
 
     u_result = fem.Function(V)
     u_result.name = "displacement"
@@ -649,30 +766,63 @@ def main() -> None:
     ] = 1.0
     potential_zone.x.scatter_forward()
 
-    with VTKFile(comm, str(output_dir / "tyre_dihedral_contact.pvd"), "w") as vtk:
+    vtk_path = output_dir / f"tyre_dihedral_contact_{args.compliance_strategy}.pvd"
+    with VTKFile(comm, str(vtk_path), "w") as vtk:
         vtk.write_mesh(mesh)
         vtk.write_function([u_result, nodal_force, potential_zone])
 
-    np.savez(
-        output_dir / "contact_result.npz",
-        force=full_force,
-        gap=full_gap,
-        clearance=full_clearance,
-        candidate_indices=candidate_indices,
-        initial_potential_contact_unknowns=initial_candidate_count,
-        potential_contact_unknowns=candidate_indices.size,
-        global_contact_unknowns=full_unknowns,
-        warning_distance=args.warning_distance,
-        potential_rounds=solve_rounds,
-        displacement=displacement_values,
-        inflation_displacement=inflation_values,
-        residual=result.residual,
-        status=result.status.value,
-        iterations=result.iterations,
-        potential_total_iterations=total_iterations,
-        contact_solver=args.contact_solver,
-        preconditioner=preconditioner_name,
+    result_payload = {
+        "force": full_force,
+        "gap": full_gap,
+        "clearance": full_clearance,
+        "candidate_indices": candidate_indices,
+        "initial_potential_contact_unknowns": initial_candidate_count,
+        "potential_contact_unknowns": candidate_indices.size,
+        "global_contact_unknowns": full_unknowns,
+        "warning_distance": args.warning_distance,
+        "warning_verification_tol": args.warning_verification_tol,
+        "potential_rounds": solve_rounds,
+        "axial_divisions": args.axial_divisions,
+        "circumferential_divisions": args.circumferential_divisions,
+        "scale": args.scale,
+        "indentation": args.indentation,
+        "young_modulus": args.young_modulus,
+        "poisson_ratio": args.poisson_ratio,
+        "inflation_pressure": args.inflation_pressure,
+        "displacement": displacement_values,
+        "inflation_displacement": inflation_values,
+        "residual": result.residual,
+        "status": result.status.value,
+        "iterations": result.iterations,
+        "potential_total_iterations": total_iterations,
+        "contact_solver": args.contact_solver,
+        "preconditioner": preconditioner_name,
+        "compliance_strategy": args.compliance_strategy,
+        "factorization_seconds": factorization_seconds,
+        "inflation_solve_seconds": inflation_solve_seconds,
+        "compliance_load_seconds": compliance_load_seconds,
+        "compliance_sampling_seconds": compliance_sampling_seconds,
+        "operator_build_seconds": operator_build_seconds,
+        "contact_solve_seconds": contact_solve_seconds,
+        "verification_seconds": verification_seconds,
+        "strategy_total_seconds": strategy_total_seconds,
+        "final_solve_seconds": final_solve_seconds,
+        "compliance_stored_entries": (
+            h_stats["memory_entries"]
+            if args.compliance_strategy == "hmatrix"
+            else 0
+        ),
+        "fe_operator_applications": int(fe_totals["operator_applications"]),
+        "fe_linear_solves": int(fe_totals["linear_solves"]),
+        "fe_cache_hits": int(fe_totals["cache_hits"]),
+        "fe_zero_bypasses": int(fe_totals["zero_bypasses"]),
+        "fe_linear_solve_seconds": fe_totals["solve_seconds"],
+    }
+    np.savez(output_dir / "contact_result.npz", **result_payload)
+    strategy_result_path = (
+        output_dir / f"contact_result_{args.compliance_strategy}.npz"
     )
+    np.savez(strategy_result_path, **result_payload)
     print(f"wrote contact results under {output_dir}")
 
 
