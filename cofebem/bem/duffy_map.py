@@ -1,5 +1,4 @@
 def duffy_map_corner(corner, u, v):
-
     if corner == 0:
         xi1 = u * (1 - v)
         xi2 = u * v

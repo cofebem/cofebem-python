@@ -6,14 +6,7 @@ from dolfinx.fem import (
     functionspace,
 )
 from dolfinx.fem.petsc import LinearProblem
-from ufl import (
-    TrialFunction,
-    TestFunction,
-    inner,
-    FacetNormal,
-    dx,
-    ds,
-)
+from ufl import TrialFunction, TestFunction, inner, FacetNormal, dx, ds, exterior_facet
 
 
 # ---------------- Mesh ----------------
@@ -48,9 +41,6 @@ problem.solve()
 
 normal_fn.x.scatter_forward()
 
-print(f"fn shape: {normal_fn.x.array.shape}")
-print(f"mesh points shape: {mesh.geometry.x.shape}")
-print(3 * 1139)
 # with XDMFFile(mesh.comm, "./results/normals/normals_hemisphere.xdmf", "w") as xdmf:
 #     xdmf.write_mesh(mesh)
 #     xdmf.write_function(normal_fn)

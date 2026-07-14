@@ -95,6 +95,7 @@ Gamma_c_tags = np.full(Gamma_c.shape, Gamma_c_id, dtype=np.int32)
 
 tc = Function(V)
 
+
 # ---------------------- Setup Neumann and contact contributions to L ----------------
 facet_indices = np.hstack([Gamma_t, Gamma_c]).astype(np.int32)
 facet_values = np.hstack(
@@ -132,7 +133,7 @@ contact = Contact(
     ds=ds,
     Gamma_c_id=Gamma_c_id,
     problem=problem,
-    solver="lemke",
+    solver="ccg",
 )
 
 

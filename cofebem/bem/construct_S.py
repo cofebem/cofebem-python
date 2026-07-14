@@ -1244,7 +1244,7 @@ if __name__ == "__main__":
     ax2.grid(True, which="both", linestyle="--", linewidth=0.5)
     ax2.legend(fontsize=12, loc="upper left")
 
-    fig
+    # fig
     plt.tight_layout()
 
     # Show the plot

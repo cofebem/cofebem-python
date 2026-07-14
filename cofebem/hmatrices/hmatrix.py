@@ -1,32 +1,56 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from numba import njit, prange
-from numba.typed import List as NbList
-
+from typing import Optional
+from scipy.linalg import lu_factor, lu_solve
 
 from .cluster_tree import ClusterTree
-from .block_cluster_tree import BlockClusterTree
-
-
-@njit
-def _hmatvec_numba(nb_rows, nb_cols, nb_kinds, nb_U, nb_V, nb_D, x, y):
-    for k in range(len(nb_kinds)):
-        rows = nb_rows[k]
-        cols = nb_cols[k]
-        if nb_kinds[k] == 1:
-            # low-rank: U @ (V.T @ x[cols])
-            U = nb_U[k]
-            V = nb_V[k]
-            tmp = V.T @ x[cols]
-            y[rows] += U @ tmp
-        else:
-
-            D = nb_D[k]
-            y[rows] += D @ x[cols]
+from .block_cluster_tree import Block, BlockClusterTree, _block_add
 
 
 class HMatrix:
+    """Hierarchical matrix (H-matrix) built from a point set and a dense matrix.
+
+    Constructs a :class:`ClusterTree` over *pts* and then a
+    :class:`BlockClusterTree` that compresses admissible blocks of *A* with a
+    chosen low-rank approximation method.  Provides matrix-vector products,
+    arithmetic operators, dense assembly, LU-based solve, diagnostics, and
+    a block-structure visualisation.
+
+    Parameters
+    ----------
+    pts : ndarray of shape (n, d)
+        Spatial coordinates of the degrees of freedom.  The i-th row
+        corresponds to the i-th row/column of *A*.
+    A : ndarray of shape (n, n)
+        Matrix to compress.  Must be square and consistent with *pts*.
+    leaf_size : int
+        Maximum cluster size for the cluster tree.
+    eta : float
+        Admissibility parameter (see :class:`BlockClusterTree`).
+    tol : float
+        Low-rank approximation tolerance.
+    split : {"pca", "kd"}
+        Splitting strategy for the cluster tree.
+    lr_approx : {"aca_partial", "aca_full", "aca_plus", "truncated_svd"}
+        Low-rank approximation method for admissible blocks.
+    symmetric : bool
+        If ``True``, only the lower-triangular blocks are stored.
+
+    Attributes
+    ----------
+    pts : ndarray
+        Point coordinates.
+    tol : float
+        Approximation tolerance.
+    symmetric : bool
+        Whether the symmetric storage format is used.
+    tree : ClusterTree
+        Spatial cluster tree.
+    block_tree : BlockClusterTree
+        Block partition with compressed blocks.
+    """
+
     def __init__(
         self,
         pts: np.ndarray,
@@ -37,103 +61,214 @@ class HMatrix:
         tol: float = 1e-6,
         split: str = "pca",
         lr_approx: str = "aca_partial",
+        symmetric: bool = False,
     ) -> None:
         self.pts = pts
+        self.tol = tol
+        self.symmetric = symmetric
         n = len(pts)
         if A.shape != (n, n):
             raise ValueError("A must be (n,n) and correspond to pts order")
 
         self.tree = ClusterTree(pts, leaf_size=leaf_size, split=split)
         self.block_tree = BlockClusterTree(
-            self.tree, self.tree, A, eta=eta, tol=tol, lr_approx=lr_approx
+            self.tree, self.tree, A,
+            eta=eta, tol=tol, lr_approx=lr_approx, symmetric=symmetric,
         )
+        self._lu_cache: Optional[tuple] = None
 
-        self._prepare_numba()
+    # ------------------------------------------------------------------
+    # Internal constructor used by arithmetic operators
+    # ------------------------------------------------------------------
+    @classmethod
+    def _from_parts(
+        cls,
+        pts: np.ndarray,
+        tree: ClusterTree,
+        block_tree: BlockClusterTree,
+        tol: float,
+        symmetric: bool,
+    ) -> "HMatrix":
+        """Construct an HMatrix directly from pre-built tree objects (no compression)."""
+        obj = cls.__new__(cls)
+        obj.pts = pts
+        obj.tol = tol
+        obj.symmetric = symmetric
+        obj.tree = tree
+        obj.block_tree = block_tree
+        obj._lu_cache = None
+        return obj
 
-    def _prepare_numba(self):
-        self._nb_rows = NbList()
-        self._nb_cols = NbList()
-        self._nb_U = NbList()
-        self._nb_V = NbList()
-        self._nb_D = NbList()
-        kinds_py = []
+    # ------------------------------------------------------------------
+    # Matrix-vector / matrix-matrix product
+    # ------------------------------------------------------------------
+    def __matmul__(self, x: np.ndarray) -> np.ndarray:
+        """Compute the H-matrix–vector product ``y = H @ x``.
 
-        z = np.empty((0, 0))  # placeholder for unused blocks
+        Parameters
+        ----------
+        x : ndarray of shape (n,) or (n, k)
+            Input vector or matrix.
 
-        for bl in self.block_tree.blocks:
-            self._nb_rows.append(np.ascontiguousarray(bl.row.idx.astype(np.int64)))
-            self._nb_cols.append(np.ascontiguousarray(bl.col.idx.astype(np.int64)))
-
-            if bl.kind == "lr":
-                self._nb_U.append(np.ascontiguousarray(bl.U))
-                self._nb_V.append(np.ascontiguousarray(bl.V))
-                self._nb_D.append(z)
-                kinds_py.append(1)
-            else:
-                self._nb_U.append(z)
-                self._nb_V.append(z)
-                self._nb_D.append(np.ascontiguousarray(bl.dense))
-                kinds_py.append(0)
-
-        self._nb_kinds = np.array(kinds_py, dtype=np.int8)
-
-    def __matmul__(self, x):
-        if x.shape[0] != len(self.pts):
+        Returns
+        -------
+        y : ndarray of the same shape as *x*.
+        """
+        n = len(self.pts)
+        if x.shape[0] != n:
             raise ValueError("size mismatch")
         y = np.zeros_like(x, dtype=float)
-        for bl in self.block_tree.blocks:
-            y[bl.row.idx] += bl.matvec(x[bl.col.idx])
+        if self.symmetric:
+            for bl in self.block_tree.blocks:
+                y[bl.row.idx] += bl.matvec(x[bl.col.idx])
+                if bl.row is not bl.col:  # off-diagonal: add transposed contribution
+                    y[bl.col.idx] += bl.matvec_T(x[bl.row.idx])
+        else:
+            for bl in self.block_tree.blocks:
+                y[bl.row.idx] += bl.matvec(x[bl.col.idx])
         return y
 
-    def matvec_overhead(self, x):
-        # measure overhead = looping + broadcasting (no arithmetic)
-        y = np.zeros_like(x, dtype=float)
-        s = 0.0
+    # ------------------------------------------------------------------
+    # Arithmetic
+    # ------------------------------------------------------------------
+    def __add__(self, other: "HMatrix") -> "HMatrix":
+        """Return ``self + other`` as a new HMatrix (requires a shared cluster tree)."""
+        if not isinstance(other, HMatrix):
+            return NotImplemented
+        if self.tree is not other.tree:
+            raise ValueError(
+                "H-matrix addition requires a shared cluster tree; "
+                "build both from the same ClusterTree."
+            )
+        if len(self.block_tree.blocks) != len(other.block_tree.blocks):
+            raise ValueError("H-matrices must have the same block structure for addition.")
+        new_blocks = [
+            _block_add(bl_a, bl_b, self.tol)
+            for bl_a, bl_b in zip(self.block_tree.blocks, other.block_tree.blocks)
+        ]
+        return HMatrix._from_parts(
+            self.pts, self.tree,
+            self.block_tree._copy_with_blocks(new_blocks),
+            self.tol, self.symmetric,
+        )
+
+    def __mul__(self, scalar: float) -> "HMatrix":
+        """Return ``scalar * self`` as a new HMatrix."""
+        new_blocks = []
         for bl in self.block_tree.blocks:
-            rows = bl.row.idx
-            cols = bl.col.idx
-            s += float(np.sum(x[cols])) * 0.0
-            y[rows] += 0.0
-        return y
+            if bl.kind == "lr":
+                new_blocks.append(
+                    Block(bl.row, bl.col, "lr",
+                          U=bl.U * scalar, V=bl.V.copy(), rank=bl.rank)
+                )
+            else:
+                new_blocks.append(
+                    Block(bl.row, bl.col, "dense", dense=bl.dense * scalar)
+                )
+        return HMatrix._from_parts(
+            self.pts, self.tree,
+            self.block_tree._copy_with_blocks(new_blocks),
+            self.tol, self.symmetric,
+        )
 
-    # def __matmul__(self, x):
-    #     if x.ndim != 1:
-    #         raise ValueError("Use a 1‑D vector on the right‑hand side.")
-    #     if x.shape[0] != len(self.pts):
-    #         raise ValueError(
-    #             "Size mismatch: got |x| = %d, expected %d" % (x.shape[0], len(self.pts))
-    #         )
+    def __rmul__(self, scalar: float) -> "HMatrix":
+        """Support ``scalar * H``."""
+        return self.__mul__(scalar)
 
-    #     y = np.zeros_like(x, dtype=float)
+    def __neg__(self) -> "HMatrix":
+        """Return ``-self``."""
+        return self.__mul__(-1.0)
 
-    #     try:
-    #         _hmatvec_numba(
-    #             self._nb_rows,
-    #             self._nb_cols,
-    #             self._nb_kinds,
-    #             self._nb_U,
-    #             self._nb_V,
-    #             self._nb_D,
-    #             x,
-    #             y,
-    #         )
-    #     except Exception:
-    #         for bl in self.block_tree.blocks:
-    #             y[bl.row.idx] += bl.matvec(x[bl.col.idx])
+    def __sub__(self, other: "HMatrix") -> "HMatrix":
+        """Return ``self - other``."""
+        return self.__add__((-1.0) * other)
 
-    #     return y
+    # ------------------------------------------------------------------
+    # Dense assembly
+    # ------------------------------------------------------------------
+    def to_dense(self) -> np.ndarray:
+        """Assemble the full n×n matrix."""
+        n = len(self.pts)
+        A = np.zeros((n, n))
+        for bl in self.block_tree.blocks:
+            i, j = bl.row.idx, bl.col.idx
+            A[np.ix_(i, j)] += bl.to_dense()
+            if self.symmetric and bl.row is not bl.col:
+                A[np.ix_(j, i)] += bl.to_dense().T
+        return A
 
-    def stats(self):
-        lr = sum(bl.kind == "lr" for bl in self.block_tree.blocks)
-        dn = len(self.block_tree.blocks) - lr
-        return {
-            "blocks": len(self.block_tree.blocks),
-            "low_rank": lr,
-            "dense": dn,
-            "memory": self.block_tree.memory(),
+    # ------------------------------------------------------------------
+    # LU factorisation (dense, in cluster ordering)
+    # ------------------------------------------------------------------
+    def lu(self) -> "HMatrix":
+        """Assemble to dense in cluster order and cache an LU factorisation."""
+        perm = np.array(self.tree.leaf_order())
+        D = self.to_dense()[np.ix_(perm, perm)]
+        self._lu_cache = (lu_factor(D), perm)
+        return self
+
+    def solve(self, b: np.ndarray) -> np.ndarray:
+        """Solve H @ x = b using the cached LU factorisation (calls lu() if needed)."""
+        if self._lu_cache is None:
+            self.lu()
+        lu_fac, perm = self._lu_cache
+        # permute b to cluster ordering, solve, then unpermute x
+        y = lu_solve(lu_fac, b[perm])
+        x = np.empty_like(y)
+        x[perm] = y
+        return x
+
+    # ------------------------------------------------------------------
+    # Diagnostics
+    # ------------------------------------------------------------------
+    def stats(self) -> dict:
+        """Return a dictionary of compression statistics.
+
+        Returns
+        -------
+        dict with keys:
+            stored_blocks : int
+                Number of leaf blocks in the partition.
+            low_rank : int
+                Number of admissible (low-rank) blocks.
+            dense : int
+                Number of inadmissible (dense) blocks.
+            memory_entries : int
+                Total stored floating-point entries.
+            symmetric : bool
+                Whether symmetric storage is active.
+            effective_blocks : int
+                (symmetric only) Counted with mirrored off-diagonal blocks.
+        """
+        blocks = self.block_tree.blocks
+        n_lr = sum(bl.kind == "lr" for bl in blocks)
+        n_dn = len(blocks) - n_lr
+        d = {
+            "stored_blocks": len(blocks),
+            "low_rank": n_lr,
+            "dense": n_dn,
+            "memory_entries": self.block_tree.memory(),
+            "symmetric": self.symmetric,
         }
+        if self.symmetric:
+            n_off = sum(bl.row is not bl.col for bl in blocks)
+            d["effective_blocks"] = len(blocks) + n_off  # each off-diag counts twice
+        return d
 
     def visualize(self, save_path=None, dpi=300):
+        """Plot the H-matrix block structure.
+
+        Low-rank blocks are shown in blue, dense blocks in orange.  The axes
+        use the cluster leaf ordering so spatially close indices appear
+        contiguously.
+
+        Parameters
+        ----------
+        save_path : str or None
+            If given, save the figure to this path (PNG/JPG auto-detected).
+        dpi : int
+            Resolution for raster output.
+        """
         n = len(self.pts)
 
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -157,6 +292,12 @@ class HMatrix:
                 (c0, r0), w, h, facecolor=face, edgecolor="black", linewidth=0.3
             )
             ax.add_patch(rect)
+            if self.symmetric and bl.row is not bl.col:
+                ax.add_patch(mpatches.Rectangle(
+                    (r0, c0), h, w,
+                    facecolor=face, edgecolor="black", linewidth=0.3, alpha=0.4,
+                ))
+
         handles = [
             mpatches.Patch(facecolor="#1f77b4", edgecolor="black", label="low‑rank"),
             mpatches.Patch(facecolor="#ff8c00", edgecolor="black", label="dense"),
@@ -174,7 +315,7 @@ class HMatrix:
         ax.set_title("ℋ‑matrix block structure")
 
         if save_path is not None:
-            if save_path.endswith(".png") or save_path.endswith(".jpg"):
+            if save_path.endswith((".png", ".jpg")):
                 fig.savefig(save_path, dpi=dpi)
             else:
                 fig.savefig(save_path)

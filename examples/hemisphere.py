@@ -23,7 +23,7 @@ from ufl import (
     tr,
     dx,
 )
-from dolfinx.io import XDMFFile, gmshio, VTKFile
+from dolfinx.io import XDMFFile, gmsh, VTKFile
 
 from mpi4py import MPI
 from petsc4py import PETSc
@@ -41,11 +41,10 @@ from cofebem.mesh.hemisphere import hemisphere
 # -------------------------------------------------------------------------------------------------------
 
 
-mesh, cell_tags, facet_tags = gmshio.read_from_msh(
+mesh = gmsh.read_from_msh(
     "./msh_files/hemisphere5.msh", MPI.COMM_WORLD, 0, gdim=3
-)
+).mesh
 
-print(facet_tags.values)
 
 # nr = 10
 # nt = 20
@@ -123,7 +122,7 @@ bc = dirichletbc(
 # -------------------------------------------------------------------------------------------------------
 
 problem = LinearProblem(
-    a=a(u, v), L=L(v), bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
+    a=a(u, v), L=L(v), bcs=[bc], petsc_options_prefix ="le", petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
 )
 
 ###Contact Solving Setup######

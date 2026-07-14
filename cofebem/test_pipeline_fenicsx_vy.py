@@ -137,13 +137,13 @@ contact = Contact(
 
 
 n_frames = 50
-time = np.linspace(0., 1., n_frames)
-amplitude_a = 1.
+time = np.linspace(0.0, 1.0, n_frames)
+amplitude_a = 1.0
 amplitude_b = 0.5
 
-sphere_mesh_path = "./results/fenicsx_pipeline_vy/sphere.xdmf"
-with XDMFFile(MPI.COMM_WORLD, sphere_mesh_path, "r") as xdmf:
-    sphere_mesh = xdmf.read_mesh(name="Grid")
+sphere_mesh_path = "./msh_files/fine2_sphere.msh"
+sphere_mesh, _, _ = gmshio.read_from_msh(sphere_mesh_path, MPI.COMM_WORLD, 0, gdim=3)
+
 sphere_ref_x = sphere_mesh.geometry.x[:, :3].copy()
 V_sphere = functionspace(sphere_mesh, ("Lagrange", 1))
 u_sphere = Function(V_sphere)
@@ -153,12 +153,12 @@ output_mesh = "./results/fenicsx_pipeline_vy/deformed_mesh.pvd"
 output_indenter = "./results/fenicsx_pipeline_vy/indenter.pvd"
 output_vtk = "./results/fenicsx_pipeline_vy/deformation_results.pvd"
 
-with VTKFile(mesh.comm, output_vtk, "w") as vtk, \
-VTKFile(mesh.comm, output_mesh, "w") as vtk_def, \
-VTKFile(mesh.comm, output_indenter, "w") as vtk_indenter:
+with VTKFile(mesh.comm, output_vtk, "w") as vtk, VTKFile(
+    mesh.comm, output_mesh, "w"
+) as vtk_def, VTKFile(mesh.comm, output_indenter, "w") as vtk_indenter:
     for k, t in enumerate(time):
         print(f"Frame {k+1}/{n_frames}")
-        theta = 2 * np.pi * (t-0.25)
+        theta = 2 * np.pi * (t - 0.25)
         xc = amplitude_a * np.sin(theta)
         yc = 0.5 + amplitude_b * np.sin(theta) * np.cos(theta)
         indenter.center = np.array([xc, yc, 1.8])

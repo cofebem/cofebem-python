@@ -1,11 +1,10 @@
-from contact.Sc import Sc
-from contact.lcp_solvers.ccg import CCG
-from contact.lcp_solvers.lemke import lemkelcp
+from cofebem.contact.Sc import Sc
+from cofebem.contact.lcp_solvers.ccg import CCG
+from cofebem.contact.lcp_solvers.lemke import lemkelcp
 from petsc4py import PETSc
 from dolfinx.fem import locate_dofs_topological, form
 from dolfinx.fem.petsc import (
     assemble_matrix,
-    assemble_matrix_mat,
     assemble_vector,
     apply_lifting,
 )
@@ -16,7 +15,16 @@ import numpy as np
 
 class Contact:
     def __init__(
-        self, mesh, indenter, tc, Gamma_c, ds, Gamma_c_id, problem, solver="ccg"
+        self,
+        mesh,
+        indenter,
+        tc,
+        Gamma_c,
+        ds,
+        Gamma_c_id,
+        problem,
+        solver="ccg",
+        save_matrix=True,
     ):
         self.mesh = mesh
         self.indenter = indenter
@@ -32,6 +40,7 @@ class Contact:
         self.Mcc = None
         self.Sc = None
         self.fc = None
+        self.save_matrix = save_matrix
         self.build_Sc()
         self.build_Mcc()
 
@@ -44,6 +53,14 @@ class Contact:
 
         dofs_c_W = locate_dofs_topological(W, fdim, self.Gamma_c)
         self.dofs_c_W = np.asarray(dofs_c_W, dtype=np.int32)
+
+        #########################
+        self.W = W
+        self.W_to_V = np.asarray(W_to_V, dtype=np.int32)
+        self.dofs_c_W = np.asarray(dofs_c_W, dtype=np.int32)
+        self.dofs_c_V = self.W_to_V[self.dofs_c_W]
+        self.W_coords = W.tabulate_dof_coordinates().reshape(-1, 3)
+        #########################
 
         self.dofs_c_V = np.asarray(W_to_V, dtype=np.int32)[self.dofs_c_W]
 
@@ -73,13 +90,13 @@ class Contact:
         self._sol = PETSc.Vec().createWithArray(self._sol_arr, comm=comm)
 
     def fc_to_tc(self, fc):
-        self._rhs_arr[:] = -fc
+        self._rhs_arr[:] = -fc  # Remeber to change to -fc
         self.ksp_Mcc.solve(self._rhs, self._sol)
         return self._sol_arr
 
     def build_Sc(self):
         self.problem._A.zeroEntries()
-        assemble_matrix_mat(self.problem._A, self.problem._a, bcs=self.problem.bcs)
+        assemble_matrix(self.problem._A, self.problem._a, bcs=self.problem.bcs)
         self.problem._A.assemble()
 
         with self.problem._b.localForm() as b_loc:
@@ -97,10 +114,17 @@ class Contact:
             self.problem.A, self.problem.b, self.mesh.topology.dim, self.Gamma_c_dofs
         ).by_sampling()
 
+        # if self.save_matrix:
+        #     self.Sc.save()
+
+    # def g(self):
+    #     pts = self.mesh.geometry.x[self.Gamma_c_dofs].reshape(
+    #         -1, self.mesh.topology.dim
+    #     )
+    #     return self.indenter.gap(pts)
+
     def g(self):
-        pts = self.mesh.geometry.x[self.Gamma_c_dofs].reshape(
-            -1, self.mesh.topology.dim
-        )
+        pts = self.W_coords[self.dofs_c_W]  # (Nc, 3)
         return self.indenter.gap(pts)
 
     def solve(self, max_iter=1000, tol=1e-6, pfactor=1e12, p0=None, *args, **kwargs):

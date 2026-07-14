@@ -17,9 +17,12 @@ from ufl import Identity, Measure, TrialFunction, TestFunction, sym, grad, inner
 
 from cofebem.bodies.sphere_indenter import Sphere
 from cofebem.fenics.contact_normal import Contact_normal
+from cofebem.fenics.contact import Contact
 
 
 # ---------------- Mesh ----------------
+import dolfinx
+
 mesh, cell_tags, facet_tags = gmshio.read_from_msh(
     "./msh_files/hemisphere2.msh", MPI.COMM_WORLD, 0, gdim=3
 )
@@ -86,7 +89,7 @@ t0 = Constant(mesh, np.array([0.0, 0.0, 0.0], dtype=PETSc.ScalarType))
 
 # ---------------- Contact BC ----------------
 def Gamma_c_locator(x):
-    return x[2] > 0.1
+    return (x[2] > 0.5) & (x[0] > -0.1)
 
 
 Gamma_c = locate_entities_boundary(mesh, fdim, Gamma_c_locator)
@@ -122,9 +125,25 @@ problem = LinearProblem(
 problem.u.name = "u"
 
 # ---------------- Setup indentation Scenario ----------------
-indenter = Sphere(center=np.array([0.5, 0.5, 1.9]), radius=1.0)
+indenter = Sphere(center=np.array([0.8, 0.0, 1.5]), radius=1.0)
 
-contact = Contact_normal(
+contact_n = Contact_normal(
+    mesh=mesh,
+    indenter=indenter,
+    tc=tc,
+    Gamma_c=Gamma_c,
+    ds=ds,
+    Gamma_c_id=Gamma_c_id,
+    problem=problem,
+    solver="lemke",
+)
+
+contact_n.solve(max_iter=1000, tol=1e-6)
+contact_n.apply_contact_forces()
+problem.solve()
+
+# ------------------------with normal ez--------------
+contact = Contact(
     mesh=mesh,
     indenter=indenter,
     tc=tc,
@@ -140,8 +159,13 @@ contact.apply_contact_forces()
 problem.solve()
 
 with VTKFile(
+    mesh.comm, f"./results/pipeline_normals/test_fenicsx_without_normals.pvd", "w"
+) as vtk0:
+    vtk0.write_function(problem.u, t=0)
+
+with VTKFile(
     mesh.comm, f"./results/pipeline_normals/test_fenicsx_normals.pvd", "w"
 ) as vtk:
-    vtk.write_function([problem.u, contact.normal_fn], t=0)
+    vtk.write_function([problem.u, contact_n.normal_fn], t=0)
 
 print("Done")

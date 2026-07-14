@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def kelvin_G(x, y, normal, mu, nu):
+def Kelvin_G(x, y, mu, nu):
     x = np.asarray(x)
     y = np.asarray(y)
     r = y - x
@@ -19,10 +19,10 @@ def kelvin_G(x, y, normal, mu, nu):
     return G
 
 
-def kelvin_H(x, y, normal, mu, nu):
+def Kelvin_H(x, y, n, mu, nu):
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
-    normal = np.asarray(normal, dtype=float)
+    n = np.asarray(n, dtype=float)
 
     r = y - x
     r_norm = np.linalg.norm(r)
@@ -33,10 +33,8 @@ def kelvin_H(x, y, normal, mu, nu):
     I = np.eye(3)
 
     factor = -1 / (8 * np.pi * (1 - nu) * r_norm**2)
-    term1 = (
-        np.dot(r, normal) * ((1 - 2 * nu) * I + 3 * np.outer(r, r) / r_norm**2) / r_norm
-    )
-    term2 = (1 - 2 * nu) * (np.outer(r, normal) - np.outer(normal, r)) / r_norm
+    term1 = np.dot(r, n) * ((1 - 2 * nu) * I + 3 * np.outer(r, r) / r_norm**2) / r_norm
+    term2 = (1 - 2 * nu) * (np.outer(r, n) - np.outer(n, r)) / r_norm
 
     H = factor * (term1 - term2)
 

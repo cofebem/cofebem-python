@@ -1,6 +1,8 @@
 test/out_elasticity/
 *.egg-info/
 __pycache__/
+*.py[cod]
+*$py.class
 results/
 output/
 build/
@@ -22,3 +24,5 @@ dist/
 *.err
 *.out
 *.tmp
+*.png 
+*.csv

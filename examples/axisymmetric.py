@@ -2,7 +2,7 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 
-from dolfinx.mesh import locate_entities_boundary
+from dolfinx.mesh import locate_entities_boundary, meshtags
 from dolfinx.fem import (
     Constant,
     Function,
@@ -10,24 +10,26 @@ from dolfinx.fem import (
     dirichletbc,
     locate_dofs_topological,
     locate_dofs_geometrical,
+    form,
 )
-from dolfinx.fem.petsc import LinearProblem
-from ufl import Identity, TrialFunction, TestFunction, sym, grad, inner, tr, dx
+from dolfinx.fem.petsc import LinearProblem, assemble_matrix
+from ufl import Identity, Measure, TrialFunction, TestFunction, sym, grad, inner, tr, dx
 from dolfinx.io import XDMFFile
 
 from mpi4py import MPI
 from petsc4py import PETSc
 from tqdm import tqdm
 
-from dolfinx.io import XDMFFile, VTKFile
+from dolfinx.io import XDMFFile, VTKFile, gmsh
 import mpi4py.MPI as MPI
 
 from cofebem.mesh.hollow_cylinder import hollow_cylinder
 from cofebem.contact.Sc import Sc
 from cofebem.contact.rigid_indenters import parabolic
 from cofebem.contact.lcp_solvers.ccg import CCG
+from cofebem.contact.lcp_solvers.lemke import lemkelcp
 from cofebem.hmatrices.hmatrix import HMatrix
-
+from cofebem.bodies.sphere_indenter import Sphere
 
 # -------------------------------------------------------------------------------------------------------
 #  Mesh and material parameters
@@ -95,7 +97,8 @@ def Gamma_u_selector(x):
 
 Gamma_u = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_u_selector)
 Iu = locate_dofs_topological(V, entity_dim=fdim, entities=Gamma_u)
-
+Gamma_u_id = 1
+Gamma_u_tags = np.full(Gamma_u.shape, Gamma_u_id, dtype=np.int32)
 u0 = np.array([0, 0, 0], dtype=PETSc.ScalarType)
 
 
@@ -110,7 +113,7 @@ bc = dirichletbc(
 #  Setup the Problem
 # -------------------------------------------------------------------------------------------------------
 problem = LinearProblem(
-    a=a(u, v), L=L(v), bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
+    a=a(u, v), L=L(v), bcs=[bc],petsc_options_prefix ="le", petsc_options={"ksp_type": "preonly", "pc_type": "lu"}
 )
 
 problem.solve()
@@ -128,6 +131,8 @@ def Gamma_c_selector(x):
 
 Gamma_c = locate_entities_boundary(mesh, dim=fdim, marker=Gamma_c_selector)
 Ic = locate_dofs_topological(V, fdim, Gamma_c)
+Gamma_c_id = 2
+Gamma_c_tags = np.full(Gamma_c.shape, Gamma_c_id, dtype=np.int32)
 
 
 def reference_line_selector(x):
@@ -220,7 +225,21 @@ print("stats:", Sc_hm.stats())
 #  Construct S_c classic
 # -------------------------------------------------------------------------------------------------------
 
+facet_indices = np.hstack([Gamma_u, Gamma_c]).astype(np.int32)
+facet_values = np.hstack(
+    [
+        Gamma_u_tags,
+        Gamma_c_tags,
+    ]
+).astype(np.int32)
 
+order = np.argsort(facet_indices)
+facet_indices = facet_indices[order]
+facet_values = facet_values[order]
+
+mt = meshtags(mesh, fdim, facet_indices, facet_values)
+
+ds = Measure("ds", domain=mesh, subdomain_data=mt)
 # classic_start = time.perf_counter()
 
 # Sc_classic = Sc(
@@ -307,6 +326,7 @@ print("stats:", Sc_hm.stats())
 #         a=a(u, v),
 #         L=L(v),
 #         bcs=[bc],
+#         petsc_options_prefix = "le",  
 #         petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
 #     )
 
@@ -446,9 +466,65 @@ print("stats:", Sc_hm.stats())
 # -------------------------------------------------------------------------------------------------------
 #  Contact Problem
 # -------------------------------------------------------------------------------------------------------
+def build_Mcc(V, mesh, ds, Gamma_c, Gamma_c_id):
+    comm = mesh.comm
+    fdim = mesh.topology.dim - 1
 
-displ = 0.7
-Rindenter = 2.0
+    W, W_to_V = V.sub(2).collapse()
+
+    dofs_c_W = locate_dofs_topological(W, fdim, Gamma_c)
+    dofs_c_W = np.asarray(dofs_c_W, dtype=np.int32)
+
+    p = TrialFunction(W)
+    q = TestFunction(W)
+    m_form = form(inner(p, q) * ds(Gamma_c_id))
+
+    M = assemble_matrix(m_form)
+    M.assemble()
+
+    is_c = PETSc.IS().createGeneral(dofs_c_W, comm=comm)
+    Mcc = M.createSubMatrix(is_c, is_c)
+
+    ksp_Mcc = PETSc.KSP().create(comm)
+    ksp_Mcc.setOperators(Mcc)
+    ksp_Mcc.setType("preonly")
+    ksp_Mcc.getPC().setType("lu")
+    ksp_Mcc.setUp()
+
+    n = len(dofs_c_W)
+    rhs_arr = np.zeros(n, dtype=PETSc.ScalarType)
+    sol_arr = np.zeros(n, dtype=PETSc.ScalarType)
+    rhs = PETSc.Vec().createWithArray(rhs_arr, comm=comm)
+    sol = PETSc.Vec().createWithArray(sol_arr, comm=comm)
+
+    return ksp_Mcc, rhs, sol, rhs_arr, sol_arr, dofs_c_W, W_to_V
+
+
+def fc_to_tc(fc, ksp_Mcc, rhs, sol, rhs_arr, sol_arr, sign=+1.0):
+    fc = np.asarray(fc, dtype=PETSc.ScalarType)
+    if fc.shape[0] != rhs_arr.shape[0]:
+        raise ValueError(
+            f"fc has length {fc.shape[0]} but Mcc expects {rhs_arr.shape[0]}"
+        )
+
+    rhs_arr[:] = sign * fc
+    ksp_Mcc.solve(rhs, sol)
+    return sol_arr.copy()
+
+
+displ = 0.5
+Rindenter = 1.0
+
+indenter = Sphere(center=np.array([0, 0, 0]), radius=Rindenter)
+
+sphere_mesh = gmsh.read_from_msh(
+    "./msh_files/fine_sphere.msh", MPI.COMM_WORLD, 0, gdim=3
+).mesh
+
+sphere_ref_x = sphere_mesh.geometry.x[:, :3].copy()
+V_sphere = functionspace(sphere_mesh, ("Lagrange", 1))
+u_sphere = Function(V_sphere)
+u_sphere.name = "indenter"
 
 max_iter = 1000
 tolerance = 1e-5
@@ -459,63 +535,91 @@ Nframes = 70
 u_fenics = Function(V)
 u_fenics.name = "u"
 
-p_fenics = Function(V)
-p_fenics.name = "p"
+
+ksp_Mcc, rhs_Mcc, sol_Mcc, rhs_arr, sol_arr, dofs_c_W, W_to_V = build_Mcc(
+    V, mesh, ds, Gamma_c, Gamma_c_id
+)
+
+W, W_to_V_full = V.sub(2).collapse()
+pW = Function(W)
+pW.name = "$p_{c}$"
 
 
-with VTKFile(mesh.comm, f"./results/axisymmetric/axisymmetric.pvd", "w") as vtk:
-    vtk.write_mesh(mesh)
-    vtk.write_function([u_fenics, p_fenics], 0)
+Vz_Ic = (Ic * tdim + 2).astype(np.int64)
+Vz_from_W = np.asarray(W_to_V_full, dtype=np.int64)[dofs_c_W]
+pos_in_Ic = {int(d): i for i, d in enumerate(Vz_Ic)}
+perm_W_from_Ic = np.array([pos_in_Ic[int(d)] for d in Vz_from_W], dtype=np.int64)
 
-ANIMATION = True
-if ANIMATION == True:
-    # x_center = np.linspace(-7.0, 7.0, Nframes)
-    theta_c = np.linspace(0.0, 2 * np.pi, Nframes)
-    rc = 3.0
-    for frame, theta_c_ in tqdm(enumerate(theta_c), desc="Solving Contact", unit="it"):
-        contact_center = np.array([rc * np.cos(theta_c_), rc * np.sin(theta_c_)])
-        gap = (
-            parabolic(
-                Gamma_c_x[:, 0],
-                Gamma_c_x[:, 1],
-                contact_center[0],
-                contact_center[1],
-                Rindenter,
-                np.ones_like(Gamma_c_x[:, 2]) - displ,
+
+with VTKFile(
+    mesh.comm, f"./results/axisymmetric/axisymmetric.pvd", "w"
+) as vtk, VTKFile(sphere_mesh.comm, f"./results/axisymmetric/sphere.pvd", "w") as vtk2:
+
+    ANIMATION = True
+    if ANIMATION == True:
+        # x_center = np.linspace(-7.0, 7.0, Nframes)
+        theta_c = np.linspace(0.0, 2 * np.pi, Nframes)
+        rc = 3.0
+        for frame, theta_c_ in tqdm(
+            enumerate(theta_c), desc="Solving Contact", unit="it"
+        ):
+            contact_center = np.array([rc * np.cos(theta_c_), rc * np.sin(theta_c_)])
+            indenter.center = np.array(
+                [rc * np.cos(theta_c_), rc * np.sin(theta_c_), 1 + Rindenter - displ]
             )
-            - Gamma_c_x[:, 2]
-        )
-        penetrating_nodes = np.where(gap < 0)[0]
+            gap = (
+                parabolic(
+                    Gamma_c_x[:, 0],
+                    Gamma_c_x[:, 1],
+                    contact_center[0],
+                    contact_center[1],
+                    Rindenter,
+                    np.ones_like(Gamma_c_x[:, 2]) - displ,
+                )
+                - Gamma_c_x[:, 2]
+            )
+            penetrating_nodes = np.where(gap < 0)[0]
+            f_ccg, _, _ = lemkelcp(Sc_dense, gap, max_iter)
+            # p_ccg_hm, _, _ = CCG(Sc_hm, error_type, gap, max_iter, tolerance).solve_hm()
 
-        p_ccg, _, _ = CCG(Sc_hm, error_type, gap, max_iter, tolerance).solve_hm()
-        # p_ccg_hm, _, _ = CCG(Sc_hm, error_type, gap, max_iter, tolerance).solve_hm()
+            # error = np.linalg.norm(p_ccg - p_ccg_hm) / np.linalg.norm(p_ccg)
 
-        # error = np.linalg.norm(p_ccg - p_ccg_hm) / np.linalg.norm(p_ccg)
+            # print(f"relative error on p = {error}")
 
-        # print(f"relative error on p = {error}")
+            # Visualization
+            solver_petsc = PETSc.KSP().create(mesh.comm)
+            solver_petsc.setOperators(problem.A)
+            solver_petsc.setType("preonly")
+            solver_petsc.getPC().setType("lu")
+            solver_petsc.setFromOptions()
+            solver_petsc.setUp()
 
-        # Visualization
-        solver_petsc = PETSc.KSP().create(mesh.comm)
-        solver_petsc.setOperators(problem.A)
-        solver_petsc.setType("preonly")
-        solver_petsc.getPC().setType("lu")
-        solver_petsc.setFromOptions()
-        solver_petsc.setUp()
+            b_ = problem.b.copy()
+            u_ = PETSc.Vec().createMPI(b_.getSize(), comm=mesh.comm)
 
-        b_ = problem.b.copy()
-        u_ = PETSc.Vec().createMPI(b_.getSize(), comm=mesh.comm)
+            b_.set(0)
+            for i, dof in enumerate(Ic):
+                b_.setValue(dof * tdim + 2, f_ccg[i])
+                b_.assemble()
 
-        b_.set(0)
-        for i, dof in enumerate(Ic):
-            b_.setValue(dof * tdim + 2, p_ccg[i])
-            b_.assemble()
+            solver_petsc.solve(b_, u_)
 
-        solver_petsc.solve(b_, u_)
+            u_fenics.x.array[:] = -u_.array
+            u_fenics.x.scatter_forward()
 
-        u_fenics.x.array[:] = -u_.array
-        u_fenics.x.scatter_forward()
+            f_ccg_W = f_ccg[perm_W_from_Ic]
 
-        p_fenics.x.array[:] = b_.array
-        p_fenics.x.scatter_forward()
+            p_ccg_W = fc_to_tc(
+                f_ccg_W, ksp_Mcc, rhs_Mcc, sol_Mcc, rhs_arr, sol_arr, sign=+1.0
+            )
 
-        vtk.write_function([u_fenics, p_fenics], frame + 1)
+            pW.x.array[:] = 0.0
+            pW.x.array[dofs_c_W] = np.abs(p_ccg_W)
+            pW.x.scatter_forward()
+
+            sphere_mesh.geometry.x[:, :3] = (
+                sphere_ref_x * indenter.radius + indenter.center
+            )
+
+            vtk.write_function([u_fenics, pW], frame)
+            vtk2.write_function(u_sphere, t=frame)

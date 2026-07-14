@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0","wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cofebem"
+version = "0.1.0"
+description = "Cofebem: boundary element method utilities and hierarchical matrices"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { identifier = "BSD-3-Clause" }
+authors = [
+  { name = "Vladislav Yastrebov", email = "" },
+  { name = "Yahya Boye", email = "yahyaboye1998@gmail.com" },
+]
+keywords = ["contact","LCP","H-matrices","FEM","BEM","FEniCSx"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: BSD License",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/cofebem/cofebem-python"
+"Source" = "https://github.com/cofebem/cofebem-python"
+
+[project.dependencies]
+numpy = ">=1.22"
+scipy = ">=1.8"
+matplotlib = "==3.9.2"
+numba = ">=0.55"
+tqdm = "==4.67.0"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "black>=23.0",
+  "flake8>=5.0",
+]
+
+fenicsx = [
+  "dolfinx==0.10.0",
+  "basix==0.10.0",
+  "ffcx==0.10.0",
+  "ufl==2025.2.1",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*"]

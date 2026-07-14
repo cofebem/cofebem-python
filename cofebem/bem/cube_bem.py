@@ -25,8 +25,8 @@ def mesh_dim(mesh):
     return max(dims)
 
 
-mesh = meshio.read("./geo_files/cube_refined_edges1.msh")
-
+mesh = meshio.read("./msh_files/cube_tetra_meshio.msh")
+print([c.type for c in mesh.cells])
 cell_type = (
     "triangle"
     if "triangle" in mesh.cells_dict
@@ -46,7 +46,7 @@ boundary_mesh = meshio.Mesh(
     points=boundary_points,
     cells=[(cell_type, boundary_cells_conn)],
 )
-# meshio.write("cube_refined_edges.vtk", boundary_mesh)
+meshio.write("mycube_refined_edges.vtk", boundary_mesh)
 
 # ------------------------------------material parameters---------------------------------------------
 
@@ -608,7 +608,7 @@ for e, tri in enumerate(boundary_cells_conn):
     lc = np.linalg.norm(p1 - p3)
     elem_h[e] = (la + lb + lc) / 3.0
 
-NEAR_FACTOR = 0.0030
+NEAR_FACTOR = 0.8
 near_thresh = NEAR_FACTOR * elem_h
 
 n_collocs = len(boundary_points)
@@ -620,7 +620,7 @@ edges = []
 regs = []
 
 
-def count_on_planes(p, tol=1e-9):
+def count_on_planes(p, tol=1e-5):
     hits = 0
     for k in range(3):
         if abs(p[k] - 0.0) <= tol or abs(p[k] - 1.0) <= tol:
@@ -629,7 +629,7 @@ def count_on_planes(p, tol=1e-9):
 
 
 c_vals = np.empty(n_collocs, dtype=float)
-tol_plane = 1e-9
+tol_plane = 1e-5
 for i, x in enumerate(boundary_points):
     hits = count_on_planes(x, tol_plane)
     if hits == 1:  # face interior
@@ -644,21 +644,21 @@ for i, x in enumerate(boundary_points):
     else:
         c_vals[i] = 0.5
 
-# print(
-#     "c counts:",
-#     "faces",
-#     int(np.sum(np.isclose(c_vals, 0.5))),
-#     len(regs),
-#     "edges",
-#     int(np.sum(np.isclose(c_vals, 0.25))),
-#     len(edges),
-#     "corners",
-#     int(np.sum(np.isclose(c_vals, 0.125))),
-#     len(corners),
-# )
+print(
+    "c counts:",
+    "faces",
+    int(np.sum(np.isclose(c_vals, 0.5))),
+    len(regs),
+    "edges",
+    int(np.sum(np.isclose(c_vals, 0.25))),
+    len(edges),
+    "corners",
+    int(np.sum(np.isclose(c_vals, 0.125))),
+    len(corners),
+)
 
 
-# print("c range:", c_vals.min(), c_vals.max())
+print("c range:", c_vals.min(), c_vals.max())
 
 
 # ================== FREE-TERM NUMERICAL CHECK ==================
@@ -760,64 +760,64 @@ for i in test_indices:
 #################################################################################################
 
 
-# G = np.zeros((tdim * n_collocs, tdim * n_collocs))
-# H = np.zeros((tdim * n_collocs, tdim * n_collocs))
+G = np.zeros((tdim * n_collocs, tdim * n_collocs))
+H = np.zeros((tdim * n_collocs, tdim * n_collocs))
 
-# for i, xc in tqdm(
-#     enumerate(boundary_points),
-#     total=n_collocs,
-#     desc="Assembling global matrices",
-# ):
+for i, xc in tqdm(
+    enumerate(boundary_points),
+    total=n_collocs,
+    desc="Assembling global matrices",
+):
 
-#     for e, elem_conn in enumerate(boundary_cells_conn):
-#         elem = elem_nodes[e]
-#         normal = elem_normals[e]
+    for e, elem_conn in enumerate(boundary_cells_conn):
+        elem = elem_nodes[e]
+        normal = elem_normals[e]
 
-#         q, (lam1, lam2, lam3), dist = closest_point_on_triangle(
-#             xc, elem[0], elem[1], elem[2]
-#         )
-#         xi_star, eta_star = lam2, lam3
+        q, (lam1, lam2, lam3), dist = closest_point_on_triangle(
+            xc, elem[0], elem[1], elem[2]
+        )
+        xi_star, eta_star = lam2, lam3
 
-#         on_element = i in elem_conn
-#         near_sing = (not on_element) and (dist < near_thresh[e])
+        on_element = i in elem_conn
+        near_sing = (not on_element) and (dist < near_thresh[e])
 
-#         if on_element:
-#             sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1, or 2
-#         else:
-#             sing_corner = None
+        if on_element:
+            sing_corner = int(np.where(elem_conn == i)[0][0])  # 0,1, or 2
+        else:
+            sing_corner = None
 
-#         for loc_idx, j in enumerate(elem_conn):
-#             if on_element:
-#                 reg_flag, xi_eta_star = "sing", None
-#             elif near_sing:
-#                 reg_flag, xi_eta_star = "near_sing", (xi_star, eta_star)
-#             else:
-#                 reg_flag, xi_eta_star = "reg", None
+        for loc_idx, j in enumerate(elem_conn):
+            if on_element:
+                reg_flag, xi_eta_star = "sing", None
+            elif near_sing:
+                reg_flag, xi_eta_star = "near_sing", (xi_star, eta_star)
+            else:
+                reg_flag, xi_eta_star = "reg", None
 
-#             Gij = integrate(
-#                 kelvin_G, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
-#             )
-#             Hij = integrate(
-#                 kelvin_H, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
-#             )
+            Gij = integrate(
+                kelvin_G, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
+            )
+            Hij = integrate(
+                kelvin_H, xc, elem, normal, loc_idx, reg_flag, xi_eta_star, sing_corner
+            )
 
-#             G[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Gij
-#             H[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Hij
+            G[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Gij
+            H[tdim * i : tdim * (i + 1), tdim * j : tdim * (j + 1)] += Hij
 
-#     H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(tdim)
+    H[tdim * i : tdim * (i + 1), tdim * i : tdim * (i + 1)] += c_vals[i] * np.eye(tdim)
 
 
-# print("Global Matrices G and H assembled")
+print("Global Matrices G and H assembled")
 
-# np.savez(
-#     "GH_CubePatch_refined_edges1_P1P1.npz",
-#     G=G,
-#     H=H,
-# )
+np.savez(
+    "GH_CubeP1P1_nearsing.npz",
+    G=G,
+    H=H,
+)
 
 # -------------------- Mixed BCs: Dirichlet on z=0, Neumann on a patch at (0.5,0.5,1) --------------------
 
-data = np.load("GH_CubePatch_refined_edges1_P1P1.npz")
+data = np.load("GH_CubeP1P1_nearsing.npz")
 
 G, H = data["G"], data["H"]
 
@@ -1016,8 +1016,8 @@ bc_mask[is_neumann_z] = 5
 boundary_mesh.point_data["u"] = U
 boundary_mesh.point_data["t"] = T
 boundary_mesh.point_data["bc_mask"] = bc_mask
-# meshio.write("CubePatch_refined_edges1_P1P1.vtu", boundary_mesh)
-# print("Wrote CubePatch_refined_edges1_P1P1.vtu")
+meshio.write("CubeP1P1_nearsing.vtu", boundary_mesh)
+print("Wrote CubeP1P1_nearsing.vtu")
 
 
 # -------------------- L2 relative error on entire boundary --------------------
@@ -1051,28 +1051,28 @@ print(
 
 
 # -------------------- L2 relative error on top surface --------------------
-# p0 = 1.0e8
+p0 = 1.0e8
 
-# alpha = nu * p0 / E
-# beta = -p0 / E
+alpha = nu * p0 / E
+beta = -p0 / E
 
 
-# U_top = U[top_nodes, :]
-# X_top = pts[top_nodes, :]
+U_top = U[top_nodes, :]
+X_top = pts[top_nodes, :]
 
-# U_exact_top = np.zeros_like(U_top)
-# U_exact_top[:, 0] = alpha * X_top[:, 0]
-# U_exact_top[:, 1] = alpha * X_top[:, 1]
-# U_exact_top[:, 2] = beta * X_top[:, 2]
+U_exact_top = np.zeros_like(U_top)
+U_exact_top[:, 0] = alpha * X_top[:, 0]
+U_exact_top[:, 1] = alpha * X_top[:, 1]
+U_exact_top[:, 2] = beta * X_top[:, 2]
 
-# err_vec = U_top - U_exact_top
-# rel_L2_vec = np.linalg.norm(err_vec.ravel()) / np.linalg.norm(U_exact_top.ravel())
+err_vec = U_top - U_exact_top
+rel_L2_vec = np.linalg.norm(err_vec.ravel()) / np.linalg.norm(U_exact_top.ravel())
 
-# err_z = U_top[:, 2] - U_exact_top[:, 2]
-# rel_L2_z = np.linalg.norm(err_z) / np.linalg.norm(U_exact_top[:, 2])
+err_z = U_top[:, 2] - U_exact_top[:, 2]
+rel_L2_z = np.linalg.norm(err_z) / np.linalg.norm(U_exact_top[:, 2])
 
-# print(f"L2 relative error on top nodes (vector displacement) = {rel_L2_vec:.3e}")
-# print(f"L2 relative error on top nodes (u_z component)       = {rel_L2_z:.3e}")
+print(f"L2 relative error on top nodes (vector displacement) = {rel_L2_vec:.3e}")
+print(f"L2 relative error on top nodes (u_z component)       = {rel_L2_z:.3e}")
 
 ##############################Construct S_c#############################################
 # inv = np.linalg.inv
@@ -1202,6 +1202,105 @@ err_center = np.linalg.norm(u_xc_bem - u_exact_center) / np.linalg.norm(u_exact_
 print("Analytical u at cube center:", u_exact_center)
 print(f"Relative error at cube center = {err_center:.3e}")
 
-# ---------------------------------Uniform Disp----------------------------------------------
-Iu_known = np.arange(len(pts))
-It_unknow = np.arange(len(pts))
+
+# -------------------- Build T_exact = sigma(U_exact) · n --------------------
+
+p0 = 1.0e8
+alpha = nu * p0 / E
+beta = -p0 / E
+
+U_exact = np.zeros((N, 3), dtype=float)
+U_exact[:, 0] = alpha * pts[:, 0]
+U_exact[:, 1] = alpha * pts[:, 1]
+U_exact[:, 2] = beta * pts[:, 2]
+
+# grad u = diag(alpha, alpha, beta)  => eps = sym(grad u) = diag(alpha, alpha, beta)
+tr_eps = 2.0 * alpha + beta
+sigma = lmbda * tr_eps * np.eye(3) + 2.0 * mu * np.diag([alpha, alpha, beta])  # 3x3
+
+node_n = np.zeros((N, 3), dtype=float)
+
+for e, conn in enumerate(boundary_cells_conn):
+    p1, p2, p3 = elem_nodes[e]
+    area = 0.5 * np.linalg.norm(np.cross(p2 - p1, p3 - p1))
+    node_n[conn[0]] += area * elem_normals[e]
+    node_n[conn[1]] += area * elem_normals[e]
+    node_n[conn[2]] += area * elem_normals[e]
+
+nn = np.linalg.norm(node_n, axis=1)
+bad = nn < 1e-14
+node_n[~bad] /= nn[~bad][:, None]
+node_n[bad] = np.array([0.0, 0.0, 1.0])  # fallback (shouldn't happen)
+
+# t = sigma · n
+T_exact = (sigma @ node_n.T).T  # (N,3)
+
+xc = np.array([0.5, 0.5, 0.5], dtype=float)
+u_xc_from_exact = u_interior_from_boundary(
+    xc,
+    boundary_points,
+    boundary_cells_conn,
+    elem_nodes,
+    elem_normals,
+    U_exact,
+    T_exact,
+)
+
+u_exact_center = np.array(
+    [alpha * xc[0], alpha * xc[1], beta * xc[2]],
+    dtype=float,
+)
+
+err_center_from_exact = np.linalg.norm(
+    u_xc_from_exact - u_exact_center
+) / np.linalg.norm(u_exact_center)
+
+print(f"Relative error at cube center = {err_center_from_exact:.3e}")
+
+print("u(xc) from analytical nodal U_exact,T_exact:", u_xc_from_exact)
+
+# ---------------------------------u = u_exact everywhere, solve for t in Hu = Gt ------------------------------
+
+# tdim = 3
+# N = boundary_points.shape[0]
+
+# u_vec = U_exact.reshape(tdim * N)  # (3N,)
+
+# rhs = H @ u_vec
+
+# try:
+#     t_vec = np.linalg.solve(G, rhs)
+# except np.linalg.LinAlgError:
+#     print("WARNING: G is singular/ill-conditioned -> using least-squares solve.")
+#     t_vec, *_ = np.linalg.lstsq(G, rhs, rcond=None)
+
+# T_from_HuGt = t_vec.reshape(N, tdim)  # (N,3)
+
+# t_err = T_from_HuGt - T_exact  # (N,3)
+# t_err_norm = np.linalg.norm(t_err, axis=1)  # (N,)
+# t_exact_norm = np.linalg.norm(T_exact, axis=1)  # (N,)
+# t_rel_err = t_err_norm / np.maximum(t_exact_norm)
+
+# rel_L2_t = np.linalg.norm(t_err) / np.linalg.norm(T_exact)
+# print(f"Relative L2 error on traction (vector) = {rel_L2_t:.3e}")
+
+# print(
+#     "t_rel_err stats:",
+#     "min",
+#     float(t_rel_err.min()),
+#     "max",
+#     float(t_rel_err.max()),
+#     "mean",
+#     float(t_rel_err.mean()),
+# )
+
+# boundary_mesh.point_data["u_exact"] = U_exact
+# boundary_mesh.point_data["t_exact"] = T_exact
+# boundary_mesh.point_data["t_from_HuGt"] = T_from_HuGt
+# boundary_mesh.point_data["t_err"] = t_err
+# boundary_mesh.point_data["t_err_norm"] = t_err_norm
+# boundary_mesh.point_data["t_rel_err"] = t_rel_err
+
+# meshio.write("traction_recovery_test.vtu", boundary_mesh)
+# print("Wrote traction_recovery_test.vtu")
+# ----------------------------------------impose t and compute u--------------------------------------
