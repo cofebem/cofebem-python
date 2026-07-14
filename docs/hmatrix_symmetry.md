@@ -59,12 +59,24 @@ PPCG only invokes `Sc_h @ vector`; it does not call `HMatrix.solve()` or
 `HMatrix.to_dense()`. CCG variants also accept operators; dense-only LCP
 methods are rejected for operator problems.
 
+For tyre-road runs, `IndexedEntrySource` normally restricts this global entry
+oracle to the principal indices selected by the warning-distance potential
+contact zone. The cluster tree, block tree, near-field blocks, ACA crosses,
+and LCP vectors then all have the candidate size rather than the complete
+surface size. A separate chunked full-target evaluation certifies excluded
+clearances without storing `S[:, K]`; see
+[`potential_contact_zone.md`](potential_contact_zone.md).
+
 ## Diagnostics and limitations
 
 The example reports stored H-matrix entries, low-rank and near-field block
 counts, source query count, and the largest requested Cartesian block. The
 saved `compliance.npz` contains the reference tensor and these statistics, not
-a dense `S_c`.
+a dense `S_c`. Pass that file through
+`--load-compliance results/tyre_dihedral/compliance.npz` to skip repeated PETSc
+unit-load sampling on a later run. The hierarchy and ACA factors are rebuilt
+from the saved tensor using the current H-matrix command-line settings; no
+global dense matrix is materialized.
 
 The current implementation is serial and uses a reusable PETSc LU
 factorization for the `2 * n_axial` sampling solves. ACA tolerance is local to

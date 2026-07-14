@@ -136,6 +136,14 @@ fixed road-normal direction and avoiding global dense reconstruction. The inflat
 to the undeformed road gap before solving the LCP, and inflation and contact
 loads are superposed in the final elastic solve.
 
+The tyre example further restricts the operator to nodes whose inflation-
+adjusted free gap is below a configurable warning distance. ACA sees an
+indexed principal entry-source view and therefore constructs only `S_KK` for
+the potential zone `K`. After solving, a chunked `S[:, K] @ p_K` evaluation
+checks clearance on the complete surface without storing that rectangular
+matrix. Violations are added with a sector/axial halo and the restricted solve
+is repeated. See `docs/potential_contact_zone.md`.
+
 ### Compliance construction
 
 `cofebem/contact/Sc.py` samples one global coordinate direction. It factorizes

@@ -10,7 +10,7 @@ This package provides:
 from .cluster_tree import Cluster, ClusterTree
 from .block_cluster_tree import Block, BlockClusterTree
 from .hmatrix import HMatrix
-from .entry_source import MatrixEntrySource
+from .entry_source import IndexedEntrySource, MatrixEntrySource
 from . import low_rank_approx
 
 __all__ = [
@@ -20,5 +20,6 @@ __all__ = [
     "BlockClusterTree",
     "HMatrix",
     "MatrixEntrySource",
+    "IndexedEntrySource",
     "low_rank_approx",
 ]

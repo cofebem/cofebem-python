@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cofebem.hmatrices import ClusterTree, HMatrix
+from cofebem.hmatrices import ClusterTree, HMatrix, IndexedEntrySource
 from cofebem.hmatrices.block_cluster_tree import Block, BlockClusterTree, _block_add
 
 
@@ -276,6 +276,36 @@ class TestHMatrixConstruction:
         source = _CountingEntrySource(A)
         with pytest.raises(ValueError, match="aca_partial"):
             HMatrix.from_entry_source(pts, source, lr_approx="truncated_svd")
+
+    def test_indexed_entry_source_builds_only_selected_principal_matrix(self):
+        points = np.linspace(0.0, 1.0, 12).reshape(-1, 1)
+        matrix = 2.0 * np.eye(12) + np.exp(
+            -np.abs(points[:, 0, None] - points[:, 0][None, :])
+        )
+        source = _CountingEntrySource(matrix)
+        indices = np.array([0, 2, 3, 7, 9, 11])
+        restricted = IndexedEntrySource(source, indices)
+        block = restricted.get_block(np.array([1, 4]), np.array([0, 3, 5]))
+
+        np.testing.assert_allclose(
+            block, matrix[np.ix_(indices[[1, 4]], indices[[0, 3, 5]])]
+        )
+        assert restricted.shape == (len(indices), len(indices))
+        hmatrix = HMatrix.from_entry_source(
+            points[indices],
+            restricted,
+            leaf_size=2,
+            tol=1.0e-10,
+            lr_approx="aca_partial",
+            symmetric=True,
+        )
+        vector = np.linspace(0.5, 1.5, len(indices))
+        np.testing.assert_allclose(
+            hmatrix @ vector,
+            matrix[np.ix_(indices, indices)] @ vector,
+            rtol=1.0e-8,
+            atol=1.0e-10,
+        )
 
 
 # ---------------------------------------------------------------------------

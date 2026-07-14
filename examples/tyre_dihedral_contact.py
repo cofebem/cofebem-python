@@ -41,12 +41,22 @@ from ufl import (
 from cofebem.fenics.dihedral_compliance import (
     DihedralComplianceEntrySource,
     create_lu_solver,
+    dilate_sector_axial_mask,
     dihedral_reflection_error,
+    infer_regular_sector_shape,
+    load_dihedral_compliance_archive,
     order_contact_sectors,
+    potential_contact_indices,
+    restricted_source_clearance,
     sample_reference_transverse_compliance,
 )
-from cofebem.hmatrices import HMatrix
-from cofebem.lcp import LCP, SectorSurfaceSpectralPreconditioner, solve
+from cofebem.hmatrices import HMatrix, IndexedEntrySource
+from cofebem.lcp import (
+    LCP,
+    RestrictedProjectedPreconditioner,
+    SectorSurfaceSpectralPreconditioner,
+    solve,
+)
 from cofebem.mesh.tyre_dihedral_hex import (
     CONTACT_TAG,
     FIXED_TAG,
@@ -193,7 +203,43 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--h-tol", type=float, default=1.0e-7)
     parser.add_argument("--h-max-rank", type=int, default=50)
     parser.add_argument("--h-split", choices=("pca", "kd"), default="pca")
+    parser.add_argument(
+        "--warning-distance",
+        type=float,
+        default=2.0e-2,
+        help=(
+            "maximum free gap admitted to the potential contact zone "
+            "(default: 0.02; use inf for the full surface)"
+        ),
+    )
+    parser.add_argument(
+        "--warning-halo",
+        type=int,
+        default=1,
+        help="sector/axial halo added around verification violations",
+    )
+    parser.add_argument(
+        "--warning-max-rounds",
+        type=int,
+        default=5,
+        help="maximum restricted solve/verification rounds",
+    )
+    parser.add_argument(
+        "--warning-verification-tol",
+        type=float,
+        default=1.0e-7,
+        help="allowed negative clearance outside the potential zone",
+    )
     parser.add_argument("--factor-solver-type", default=None)
+    parser.add_argument(
+        "--load-compliance",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "load reference-meridian samples from a previous compliance.npz "
+            "and skip the compliance sampling solves"
+        ),
+    )
     parser.add_argument("--sampling-only", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
     return parser.parse_args()
@@ -216,25 +262,81 @@ def main() -> None:
         raise ValueError("H-matrix eta and tolerance must be positive")
     if args.pcg_zero_mode_factor <= 0.0:
         raise ValueError("pcg-zero-mode-factor must be positive")
+    if args.axial_divisions < 6 or args.axial_divisions % 2:
+        raise ValueError("axial-divisions must be an even integer >= 6")
+    if (
+        args.circumferential_divisions < 4
+        or args.circumferential_divisions % 2
+    ):
+        raise ValueError(
+            "circumferential-divisions must be an even integer >= 4"
+        )
+    if args.scale <= 0.0:
+        raise ValueError("scale must be positive")
+    if np.isnan(args.warning_distance) or args.warning_distance < 0.0:
+        raise ValueError("warning-distance must be non-negative")
+    if args.warning_halo < 0:
+        raise ValueError("warning-halo must be non-negative")
+    if args.warning_max_rounds <= 0:
+        raise ValueError("warning-max-rounds must be positive")
+    if args.warning_verification_tol <= 0.0:
+        raise ValueError("warning-verification-tol must be positive")
 
     mesh_path = args.mesh.resolve()
-    if args.regenerate or not mesh_path.exists():
-        generate_tyre_mesh(
-            args.template,
-            mesh_path,
-            axial_divisions=args.axial_divisions,
-            circumferential_divisions=args.circumferential_divisions,
-            scale=args.scale,
-        )
+    default_mesh_path = (
+        Path(__file__).resolve().parents[1]
+        / "results"
+        / "tyre_dihedral"
+        / "tyre_dihedral.msh"
+    ).resolve()
+    generate_mesh = args.regenerate or not mesh_path.exists()
+    while True:
+        if generate_mesh:
+            generate_tyre_mesh(
+                args.template,
+                mesh_path,
+                axial_divisions=args.axial_divisions,
+                circumferential_divisions=args.circumferential_divisions,
+                scale=args.scale,
+            )
 
-    mesh, _, facet_tags = gmshio.read_from_msh(mesh_path, comm, rank=0, gdim=3)
-    contact_facets = facet_tags.find(CONTACT_TAG)
-    fixed_facets = facet_tags.find(FIXED_TAG)
-    if contact_facets.size == 0 or fixed_facets.size == 0:
-        raise RuntimeError("Generated mesh is missing contact or bead facet tags")
+        mesh, _, facet_tags = gmshio.read_from_msh(
+            mesh_path, comm, rank=0, gdim=3
+        )
+        contact_facets = facet_tags.find(CONTACT_TAG)
+        fixed_facets = facet_tags.find(FIXED_TAG)
+        if contact_facets.size == 0 or fixed_facets.size == 0:
+            raise RuntimeError("Generated mesh is missing contact or bead facet tags")
+
+        contact_vertices = _surface_vertices(mesh, contact_facets)
+        actual_sectors, actual_axial_nodes = infer_regular_sector_shape(
+            mesh.geometry.x[contact_vertices]
+        )
+        actual_axial_divisions = actual_axial_nodes - 1
+        density_matches = (
+            actual_sectors == args.circumferential_divisions
+            and actual_axial_divisions == args.axial_divisions
+        )
+        if density_matches:
+            break
+        mismatch = (
+            f"existing mesh density is axial={actual_axial_divisions}, "
+            f"circumferential={actual_sectors}; requested axial="
+            f"{args.axial_divisions}, circumferential="
+            f"{args.circumferential_divisions}"
+        )
+        if generate_mesh:
+            raise RuntimeError(
+                f"Generated tyre mesh has an unexpected density: {mismatch}"
+            )
+        if mesh_path != default_mesh_path:
+            raise ValueError(
+                f"{mismatch}. Pass --regenerate to replace the custom mesh."
+            )
+        print(f"{mismatch}; regenerating the default tyre mesh")
+        generate_mesh = True
 
     # Put the undeformed outer tread at a prescribed penetration into z=0.
-    contact_vertices = _surface_vertices(mesh, contact_facets)
     vertical_shift = -float(mesh.geometry.x[contact_vertices, 2].min()) - args.indentation
     mesh.geometry.x[:, 2] += vertical_shift
 
@@ -258,17 +360,37 @@ def main() -> None:
         axis_yz=(0.0, vertical_shift),
     )
 
+    full_points = ordering.points.reshape(-1, 3)
+    if args.load_compliance is not None:
+        samples = load_dihedral_compliance_archive(
+            args.load_compliance,
+            full_points,
+            n_axial=ordering.n_axial,
+            n_sectors=ordering.n_sectors,
+            young_modulus=args.young_modulus,
+            poisson_ratio=args.poisson_ratio,
+        )
+        sampling_solves = 0
+        print(
+            "loaded reference compliance data from "
+            f"{args.load_compliance.expanduser().resolve()}"
+        )
+    else:
+        samples = None
+        sampling_solves = 2 * ordering.n_axial
+
     ksp = create_lu_solver(
         A, comm, factor_solver_type=args.factor_solver_type
     )
     inflation_displacement = A.createVecLeft()
     ksp.solve(pressure_rhs, inflation_displacement)
-    samples = sample_reference_transverse_compliance(
-        A,
-        ksp,
-        ordering,
-        show_progress=not args.no_progress,
-    )
+    if samples is None:
+        samples = sample_reference_transverse_compliance(
+            A,
+            ksp,
+            ordering,
+            show_progress=not args.no_progress,
+        )
     compliance_source = DihedralComplianceEntrySource(samples)
     reflection_error = dihedral_reflection_error(samples)
     reciprocity_error = compliance_source.reciprocity_error(
@@ -277,7 +399,7 @@ def main() -> None:
     print(
         f"contact unknowns={compliance_source.shape[0]}, "
         f"reference axial nodes={ordering.n_axial}, "
-        f"PETSc LU solves={2 * ordering.n_axial}"
+        f"PETSc LU compliance solves={sampling_solves}"
     )
     print(f"maximum sector angle error={ordering.sector_angle_error:.3e} rad")
     print(f"dihedral reflection error={reflection_error:.3e}")
@@ -290,47 +412,186 @@ def main() -> None:
 
     output_dir = mesh_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
-    points = ordering.points.reshape(-1, 3)
-    if points.shape[0] > 1 and args.h_leaf_size >= points.shape[0]:
-        raise ValueError(
-            "h-leaf-size must be smaller than the number of contact unknowns "
-            "to avoid a single global dense block"
-        )
-    Sc_h = HMatrix.from_entry_source(
-        points,
-        compliance_source,
-        leaf_size=args.h_leaf_size,
-        eta=args.h_eta,
-        tol=args.h_tol,
-        split=args.h_split,
-        lr_approx="aca_partial",
-        symmetric=True,
-        max_rank=args.h_max_rank,
-    )
-    h_stats = Sc_h.stats()
-    query_stats = compliance_source.stats()
-    dense_entries = points.shape[0] ** 2
-    print(
-        "H-matrix blocks="
-        f"{h_stats['stored_blocks']} ({h_stats['low_rank']} low-rank, "
-        f"{h_stats['dense']} near-field), stored entries="
-        f"{h_stats['memory_entries']}/{dense_entries} "
-        f"({h_stats['memory_entries'] / dense_entries:.3%})"
-    )
-    print(
-        f"entry-source calls={query_stats['query_calls']}, "
-        f"queried scalar entries={query_stats['queried_entries']}, "
-        f"largest query={query_stats['largest_query']}"
-    )
     inflation_values = inflation_displacement.getArray(readonly=True)
-    gap = points[:, 2] + inflation_values[ordering.parent_z_dofs.ravel()]
+    full_gap = (
+        full_points[:, 2]
+        + inflation_values[ordering.parent_z_dofs.ravel()]
+    )
+    candidate_indices = potential_contact_indices(
+        full_gap, args.warning_distance
+    )
+    full_unknowns = full_points.shape[0]
+    print(
+        f"potential contact zone={candidate_indices.size}/{full_unknowns} "
+        f"unknowns ({candidate_indices.size / full_unknowns:.3%}), "
+        f"warning distance={args.warning_distance:g}"
+    )
+
+    def build_potential_hmatrix(indices):
+        points = full_points[indices]
+        if points.shape[0] > 1 and args.h_leaf_size >= points.shape[0]:
+            raise ValueError(
+                "h-leaf-size must be smaller than the number of potential "
+                "contact unknowns to avoid a single global dense block"
+            )
+        restricted_source = IndexedEntrySource(compliance_source, indices)
+        compliance_source.reset_stats()
+        matrix = HMatrix.from_entry_source(
+            points,
+            restricted_source,
+            leaf_size=args.h_leaf_size,
+            eta=args.h_eta,
+            tol=args.h_tol,
+            split=args.h_split,
+            lr_approx="aca_partial",
+            symmetric=True,
+            max_rank=args.h_max_rank,
+        )
+        stats = matrix.stats()
+        queries = compliance_source.stats()
+        dense_entries = points.shape[0] ** 2
+        print(
+            "H-matrix blocks="
+            f"{stats['stored_blocks']} ({stats['low_rank']} low-rank, "
+            f"{stats['dense']} near-field), stored entries="
+            f"{stats['memory_entries']}/{dense_entries} "
+            f"({stats['memory_entries'] / dense_entries:.3%} of potential dense), "
+            f"{stats['memory_entries'] / full_unknowns ** 2:.3%} of global dense"
+        )
+        print(
+            f"entry-source calls={queries['query_calls']}, "
+            f"queried scalar entries={queries['queried_entries']}, "
+            f"largest query={queries['largest_query']}"
+        )
+        return matrix, stats, queries
+
+    full_spectral_preconditioner = None
+    preconditioner_name = "none"
+    if args.contact_solver == "ppcg" and args.pcg_preconditioner == "spectral":
+        full_spectral_preconditioner = SectorSurfaceSpectralPreconditioner(
+            ordering.points,
+            zero_mode_factor=args.pcg_zero_mode_factor,
+        )
+        preconditioner_name = (
+            "restricted_sector_spectral"
+            if candidate_indices.size < full_unknowns
+            else "sector_spectral"
+        )
+        preconditioner_label = preconditioner_name.replace("_", " ")
+        print(
+            f"PPCG preconditioner={preconditioner_label} "
+            f"(zero-mode factor={args.pcg_zero_mode_factor:g})"
+        )
+
+    result = None
+    full_force = np.zeros(full_unknowns, dtype=float)
+    full_clearance = full_gap.copy()
+    initial_candidate_count = candidate_indices.size
+    solve_rounds = 0
+    total_iterations = 0
+    z0 = None
+    while True:
+        solve_rounds += 1
+        print(
+            f"potential-zone round {solve_rounds}: "
+            f"building {candidate_indices.size} x {candidate_indices.size} operator"
+        )
+        Sc_h, h_stats, query_stats = build_potential_hmatrix(candidate_indices)
+        if args.sampling_only:
+            break
+
+        options: dict[str, object] = {
+            "tol": args.tol,
+            "max_iter": args.max_iter,
+            "record_history": True,
+        }
+        if z0 is not None:
+            options["z0"] = z0
+        if args.contact_solver == "ppcg":
+            options["beta_method"] = args.pcg_beta_method
+            if full_spectral_preconditioner is not None:
+                options["preconditioner"] = RestrictedProjectedPreconditioner(
+                    full_spectral_preconditioner, candidate_indices
+                )
+
+        result = solve(
+            LCP(Sc_h, full_gap[candidate_indices]),
+            method=args.contact_solver,
+            **options,
+        )
+        print(result.message)
+        total_iterations += result.iterations
+        if not result.converged:
+            raise RuntimeError(
+                f"Contact solve did not converge: {result.status.value}"
+            )
+
+        full_force.fill(0.0)
+        full_force[candidate_indices] = result.z
+        excluded = np.ones(full_unknowns, dtype=bool)
+        excluded[candidate_indices] = False
+        if not np.any(excluded):
+            full_clearance = result.w.copy()
+            break
+
+        compliance_source.reset_stats()
+        full_clearance = restricted_source_clearance(
+            compliance_source,
+            full_gap,
+            candidate_indices,
+            result.z,
+        )
+        verification_stats = compliance_source.stats()
+        violations = excluded & (
+            full_clearance < -args.warning_verification_tol
+        )
+        print(
+            "full-surface verification: "
+            f"minimum excluded clearance={full_clearance[excluded].min():.3e}, "
+            f"violations={np.count_nonzero(violations)}, "
+            f"queried entries={verification_stats['queried_entries']}"
+        )
+        if not np.any(violations):
+            break
+        if solve_rounds >= args.warning_max_rounds:
+            raise RuntimeError(
+                "Potential contact zone could not be certified after "
+                f"{solve_rounds} rounds; increase --warning-distance or "
+                "--warning-max-rounds"
+            )
+
+        violation_mask = violations.reshape(
+            ordering.n_sectors, ordering.n_axial
+        )
+        addition = dilate_sector_axial_mask(
+            violation_mask, halo=args.warning_halo
+        ).reshape(-1)
+        candidate_mask = np.zeros(full_unknowns, dtype=bool)
+        candidate_mask[candidate_indices] = True
+        candidate_mask |= addition
+        previous_force = full_force.copy()
+        candidate_indices = np.flatnonzero(candidate_mask).astype(np.int64)
+        z0 = previous_force[candidate_indices]
+        print(
+            f"expanded potential contact zone to {candidate_indices.size} "
+            "unknowns around verification violations"
+        )
+
     np.savez(
         output_dir / "compliance.npz",
         samples=samples,
-        points=points,
-        gap=gap,
+        points=full_points,
+        gap=full_gap,
+        candidate_indices=candidate_indices,
+        warning_distance=args.warning_distance,
+        potential_contact_unknowns=candidate_indices.size,
+        global_contact_unknowns=full_unknowns,
+        potential_rounds=0 if args.sampling_only else solve_rounds,
         inflation_displacement=inflation_values,
         inflation_pressure=args.inflation_pressure,
+        archive_format_version=3,
+        young_modulus=args.young_modulus,
+        poisson_ratio=args.poisson_ratio,
         axial_divisions=args.axial_divisions,
         circumferential_divisions=args.circumferential_divisions,
         h_leaf_size=args.h_leaf_size,
@@ -346,35 +607,21 @@ def main() -> None:
         print(f"saved reference compliance data to {output_dir / 'compliance.npz'}")
         return
 
-    options: dict[str, object] = {"tol": args.tol, "max_iter": args.max_iter}
-    options["record_history"] = True
-    preconditioner_name = "none"
-    if args.contact_solver == "ppcg":
-        options["beta_method"] = args.pcg_beta_method
-        if args.pcg_preconditioner == "spectral":
-            options["preconditioner"] = SectorSurfaceSpectralPreconditioner(
-                ordering.points,
-                zero_mode_factor=args.pcg_zero_mode_factor,
-            )
-            preconditioner_name = "sector_spectral"
-            print(
-                "PPCG preconditioner=sector spectral "
-                f"(zero-mode factor={args.pcg_zero_mode_factor:g})"
-            )
-    result = solve(LCP(Sc_h, gap), method=args.contact_solver, **options)
-    print(result.message)
-    print(
-        f"primal={result.primal_violation:.3e}, dual={result.dual_violation:.3e}, "
-        f"complementarity={result.complementarity:.3e}"
+    primal_violation = max(0.0, -float(full_force.min()))
+    dual_violation = max(0.0, -float(full_clearance.min()))
+    complementarity = float(
+        np.linalg.norm(full_force * full_clearance, ord=np.inf)
     )
-    if not result.converged:
-        raise RuntimeError(f"Contact solve did not converge: {result.status.value}")
+    print(
+        f"global primal={primal_violation:.3e}, dual={dual_violation:.3e}, "
+        f"complementarity={complementarity:.3e}"
+    )
 
     rhs = pressure_rhs.copy()
     displacement = A.createVecLeft()
     rhs.setValues(
-        ordering.parent_z_dofs.ravel(),
-        result.z,
+        ordering.parent_z_dofs.ravel()[candidate_indices],
+        full_force[candidate_indices],
         addv=PETSc.InsertMode.ADD_VALUES,
     )
     rhs.assemble()
@@ -391,23 +638,38 @@ def main() -> None:
     nodal_force = fem.Function(Wz)
     nodal_force.name = "nodal_contact_force"
     nodal_force.x.array[:] = 0.0
-    nodal_force.x.array[ordering.scalar_dofs.ravel()] = result.z
+    nodal_force.x.array[ordering.scalar_dofs.ravel()] = full_force
     nodal_force.x.scatter_forward()
+
+    potential_zone = fem.Function(Wz)
+    potential_zone.name = "potential_contact_zone"
+    potential_zone.x.array[:] = 0.0
+    potential_zone.x.array[
+        ordering.scalar_dofs.ravel()[candidate_indices]
+    ] = 1.0
+    potential_zone.x.scatter_forward()
 
     with VTKFile(comm, str(output_dir / "tyre_dihedral_contact.pvd"), "w") as vtk:
         vtk.write_mesh(mesh)
-        vtk.write_function([u_result, nodal_force])
+        vtk.write_function([u_result, nodal_force, potential_zone])
 
     np.savez(
         output_dir / "contact_result.npz",
-        force=result.z,
-        gap=gap,
-        clearance=result.w,
+        force=full_force,
+        gap=full_gap,
+        clearance=full_clearance,
+        candidate_indices=candidate_indices,
+        initial_potential_contact_unknowns=initial_candidate_count,
+        potential_contact_unknowns=candidate_indices.size,
+        global_contact_unknowns=full_unknowns,
+        warning_distance=args.warning_distance,
+        potential_rounds=solve_rounds,
         displacement=displacement_values,
         inflation_displacement=inflation_values,
         residual=result.residual,
         status=result.status.value,
         iterations=result.iterations,
+        potential_total_iterations=total_iterations,
         contact_solver=args.contact_solver,
         preconditioner=preconditioner_name,
     )

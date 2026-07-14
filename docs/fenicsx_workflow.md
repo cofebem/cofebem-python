@@ -178,6 +178,30 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
   --axial-divisions 24 --circumferential-divisions 32 --regenerate
 ```
 
+The example infers the axial and circumferential density of an existing mesh
+from its tagged contact meridians. If the repository's default generated mesh
+does not match the requested divisions, it is regenerated automatically. For
+a custom `--mesh` path, pass `--regenerate` explicitly to authorize replacing
+the file. Both division counts must be even for the blocked structured mesh;
+an odd request such as 201 sectors is rejected before mesh loading.
+
+To reuse a previously sampled reference meridian, pass its archive:
+
+```bash
+conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
+  --axial-divisions 24 --circumferential-divisions 32 \
+  --load-compliance results/tyre_dihedral/compliance.npz
+```
+
+This skips the `2 * n_axial` unit-load compliance solves and rebuilds the
+H-matrix directly from the saved reference tensor. It still loads the mesh,
+assembles and factorizes the stiffness, solves the current inflation preload,
+and performs the final elastic solve. The loader checks sector and axial sizes,
+translation-independent surface geometry/order, and elastic constants when the
+archive provides them. This permits a changed indentation or inflation pressure
+without re-sampling. Legacy archives without material metadata are accepted
+with a warning because their elastic compatibility cannot be verified.
+
 The implementation reports sector alignment, reflection parity, sampled
 reciprocity, H-matrix storage, and entry-query counts. Symmetric H-matrix
 storage enforces reciprocity without constructing or projecting a global
@@ -193,6 +217,24 @@ many active-set violations to be corrected in one iteration. A periodic
 Fourier transform around the tyre and a cosine transform along its axis apply
 an SPD inverse-compliance spectral model. Use
 `--pcg-preconditioner none` or `--contact-solver ccg_v2` for comparisons.
+
+### Potential contact zone
+
+The global ordered surface is retained for symmetry reconstruction and final
+FEM force scattering, but the H-matrix and LCP use only
+
+```text
+K = {i : inflation-adjusted free_gap[i] <= warning_distance}.
+```
+
+The default `--warning-distance 0.02` typically selects a small road-facing
+patch. `--warning-distance inf` selects every surface node. A restricted solve
+is followed by a chunked full-surface clearance evaluation. Negative clearance
+outside `K` triggers halo expansion and a warm-started rebuild; failure to
+certify within `--warning-max-rounds` is an error. The spectral preconditioner
+is applied by scattering the irregular candidate vector to the full regular
+sector grid and gathering back. Detailed safety and complexity notes are in
+[`potential_contact_zone.md`](potential_contact_zone.md).
 
 ## Diagnostics
 

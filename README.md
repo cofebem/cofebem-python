@@ -93,10 +93,32 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
 Use `--pcg-preconditioner none` to measure the unpreconditioned projected
 method, or `--contact-solver ccg_v2` for the previous face-by-face baseline.
 
+By default, the example builds and solves only the part of the tyre whose
+inflation-adjusted free gap is within `--warning-distance 0.02` of the road.
+It certifies excluded nodes with a chunked full-target evaluation and expands
+the zone around any penetration before repeating the restricted solve. Use
+`--warning-distance inf` for the previous global-surface path. See the
+[potential contact zone](docs/potential_contact_zone.md) for the formulation,
+tuning, and output fields.
+
 Use `--sampling-only` to stop after constructing the H-matrix. The saved
 `compliance.npz` contains the sampled reference tensor and H-matrix statistics,
-not a dense global `S_c`. Generated meshes, arrays, and VTK output are written below
-`results/tyre_dihedral/`. For mesh generation alone, edit the two constants in
+not a dense global `S_c`. Reuse those samples without repeating the compliance
+solves with:
+
+```bash
+conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
+  --axial-divisions 24 --circumferential-divisions 32 \
+  --load-compliance results/tyre_dihedral/compliance.npz
+```
+
+The current mesh/contact ordering and recorded elastic constants must match the
+archive; indentation and inflation pressure may change. Generated meshes,
+arrays, and VTK output are written below `results/tyre_dihedral/`. The example
+detects when this default mesh has a different density from the requested
+divisions and regenerates it automatically. A custom `--mesh` path is only
+overwritten when `--regenerate` is explicit. Circumferential and axial division
+counts must both be even. For mesh generation alone, edit the two constants in
 `examples/generate_tyre_dihedral_mesh.py` and run that short script.
 
 ## Main packages

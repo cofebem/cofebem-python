@@ -7,7 +7,9 @@ the 2x2 transverse (y/z) compliance tensor rather than a scalar cyclic shift.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from mpi4py import MPI
@@ -159,6 +161,268 @@ class DihedralComplianceEntrySource(MatrixEntrySource):
         self.query_calls = 0
         self.queried_entries = 0
         self.largest_query = (0, 0)
+
+
+def load_dihedral_compliance_archive(
+    path: str | Path,
+    points: np.ndarray,
+    *,
+    n_axial: int,
+    n_sectors: int,
+    young_modulus: float | None = None,
+    poisson_ratio: float | None = None,
+) -> np.ndarray:
+    """Load and validate reference-meridian samples from ``compliance.npz``.
+
+    A uniform translation of the saved contact points is accepted so that the
+    same linear compliance can be reused at another indentation.  Inflation
+    pressure is intentionally not checked because it changes the free
+    displacement and effective gap, not the linear compliance operator.
+
+    Archives written before elastic constants were added remain readable.  A
+    warning makes clear that those legacy files cannot verify the material.
+    """
+    archive_path = Path(path).expanduser().resolve()
+    if not archive_path.is_file():
+        raise FileNotFoundError(f"Compliance archive does not exist: {archive_path}")
+
+    try:
+        with np.load(archive_path, allow_pickle=False) as archive:
+            missing = {"samples", "points"}.difference(archive.files)
+            if missing:
+                names = ", ".join(sorted(missing))
+                raise ValueError(
+                    f"Compliance archive {archive_path} is missing: {names}"
+                )
+            samples = np.array(archive["samples"], dtype=float, copy=True)
+            saved_points = np.array(archive["points"], dtype=float, copy=True)
+
+            metadata: dict[str, object] = {}
+            for name in (
+                "axial_divisions",
+                "circumferential_divisions",
+                "young_modulus",
+                "poisson_ratio",
+            ):
+                if name in archive.files:
+                    value = np.asarray(archive[name])
+                    if value.size != 1:
+                        raise ValueError(
+                            f"Compliance archive field {name!r} must be scalar"
+                        )
+                    metadata[name] = value.reshape(-1)[0].item()
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("Compliance archive"):
+            raise
+        raise ValueError(
+            f"Could not read compliance archive {archive_path}: {exc}"
+        ) from exc
+
+    source = DihedralComplianceEntrySource(samples)
+    if source.n_axial != n_axial or source.n_sectors != n_sectors:
+        raise ValueError(
+            "Loaded compliance dimensions do not match the current contact surface: "
+            f"archive={source.n_sectors} sectors x {source.n_axial} axial nodes, "
+            f"current={n_sectors} x {n_axial}"
+        )
+
+    current_points = np.asarray(points, dtype=float)
+    expected_shape = (source.shape[0], 3)
+    if saved_points.shape != expected_shape or current_points.shape != expected_shape:
+        raise ValueError(
+            "Loaded compliance point dimensions do not match the current contact "
+            f"surface: archive={saved_points.shape}, current={current_points.shape}, "
+            f"expected={expected_shape}"
+        )
+    if not np.all(np.isfinite(saved_points)) or not np.all(np.isfinite(current_points)):
+        raise ValueError("Compliance archive or current contact points are not finite")
+
+    saved_centered = saved_points - saved_points.mean(axis=0)
+    current_centered = current_points - current_points.mean(axis=0)
+    diameter = max(float(np.ptp(current_points, axis=0).max()), 1.0e-12)
+    if not np.allclose(
+        saved_centered,
+        current_centered,
+        rtol=1.0e-9,
+        atol=max(1.0e-12, 1.0e-9 * diameter),
+    ):
+        raise ValueError(
+            "Loaded compliance contact geometry or sector-major ordering does not "
+            "match the current mesh"
+        )
+
+    expected_divisions = {
+        "axial_divisions": n_axial - 1,
+        "circumferential_divisions": n_sectors,
+    }
+    for name, expected in expected_divisions.items():
+        if name in metadata and int(metadata[name]) != expected:
+            raise ValueError(
+                f"Loaded compliance {name}={metadata[name]} does not match "
+                f"the current value {expected}"
+            )
+
+    material = {
+        "young_modulus": young_modulus,
+        "poisson_ratio": poisson_ratio,
+    }
+    missing_material = []
+    for name, expected in material.items():
+        if expected is None:
+            continue
+        if name not in metadata:
+            missing_material.append(name)
+        elif not np.isclose(
+            float(metadata[name]), float(expected), rtol=1.0e-12, atol=0.0
+        ):
+            raise ValueError(
+                f"Loaded compliance {name}={metadata[name]} does not match "
+                f"the current value {expected}"
+            )
+    if missing_material:
+        warnings.warn(
+            "Loaded legacy compliance archive has no "
+            + "/".join(missing_material)
+            + "; material compatibility could not be verified",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return samples
+
+
+def infer_regular_sector_shape(
+    points: np.ndarray,
+    *,
+    axis_yz: tuple[float, float] = (0.0, 0.0),
+    angle_tol: float = 1.0e-8,
+) -> tuple[int, int]:
+    """Infer ``(n_sectors, nodes_per_sector)`` from a revolved point set.
+
+    All points must lie on equally spaced meridians about the global x axis.
+    The points need not be ordered, but every meridian must contain the same
+    number of points.
+    """
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 3 or len(points) == 0:
+        raise ValueError("points must have nonzero shape (n, 3)")
+    if not np.all(np.isfinite(points)):
+        raise ValueError("points contain NaN or infinite values")
+    if angle_tol <= 0.0:
+        raise ValueError("angle_tol must be positive")
+
+    y0, z0 = axis_yz
+    relative_y = points[:, 1] - y0
+    relative_z = points[:, 2] - z0
+    radius = np.hypot(relative_y, relative_z)
+    if np.any(radius <= np.finfo(float).eps):
+        raise ValueError("cannot infer a meridian for points on the rotation axis")
+
+    angles = np.sort(np.mod(np.arctan2(relative_z, relative_y), 2.0 * np.pi))
+    clusters: list[list[float]] = [[float(angles[0])]]
+    for angle in angles[1:]:
+        if float(angle) - clusters[-1][-1] <= angle_tol:
+            clusters[-1].append(float(angle))
+        else:
+            clusters.append([float(angle)])
+
+    if len(clusters) > 1 and clusters[0][0] + 2.0 * np.pi - clusters[-1][-1] <= angle_tol:
+        clusters[0] = [value - 2.0 * np.pi for value in clusters[-1]] + clusters[0]
+        clusters.pop()
+
+    counts = np.array([len(cluster) for cluster in clusters], dtype=int)
+    if np.any(counts != counts[0]):
+        raise ValueError(
+            "cannot infer regular sectors because meridian point counts differ: "
+            f"{sorted(np.unique(counts).tolist())}"
+        )
+
+    centers = np.mod(
+        np.array([np.mean(cluster) for cluster in clusters]), 2.0 * np.pi
+    )
+    centers.sort()
+    n_sectors = len(centers)
+    if n_sectors < 2:
+        raise ValueError("at least two meridians are required")
+    gaps = np.diff(np.concatenate([centers, centers[:1] + 2.0 * np.pi]))
+    expected_gap = 2.0 * np.pi / n_sectors
+    if not np.allclose(gaps, expected_gap, rtol=0.0, atol=2.0 * angle_tol):
+        raise ValueError(
+            "point meridians are not equally spaced: maximum sector-gap error is "
+            f"{np.max(np.abs(gaps - expected_gap)):.3e} rad"
+        )
+    return n_sectors, int(counts[0])
+
+
+def potential_contact_indices(
+    free_gap: np.ndarray, warning_distance: float
+) -> np.ndarray:
+    """Select nodes whose free gap lies within the warning distance."""
+    gap = np.asarray(free_gap, dtype=float).reshape(-1)
+    if gap.size == 0 or not np.all(np.isfinite(gap)):
+        raise ValueError("free_gap must be a nonempty finite vector")
+    if np.isnan(warning_distance) or warning_distance < 0.0:
+        raise ValueError("warning_distance must be non-negative")
+    indices = np.flatnonzero(gap <= warning_distance).astype(np.int64)
+    if indices.size == 0:
+        raise ValueError(
+            "warning_distance selects no potential contact nodes; its value "
+            f"is {warning_distance:g} while the minimum free gap is {gap.min():.6g}"
+        )
+    return indices
+
+
+def dilate_sector_axial_mask(mask: np.ndarray, halo: int = 1) -> np.ndarray:
+    """Dilate a sector/axial mask, periodically in the sector direction."""
+    expanded = np.asarray(mask, dtype=bool)
+    if expanded.ndim != 2 or expanded.size == 0:
+        raise ValueError("mask must be a nonempty (n_sectors, n_axial) array")
+    if halo < 0:
+        raise ValueError("halo must be non-negative")
+    expanded = expanded.copy()
+    for _ in range(halo):
+        previous = expanded
+        expanded = previous | np.roll(previous, 1, axis=0) | np.roll(
+            previous, -1, axis=0
+        )
+        expanded[:, 1:] |= previous[:, :-1]
+        expanded[:, :-1] |= previous[:, 1:]
+    return expanded
+
+
+def restricted_source_clearance(
+    source: MatrixEntrySource,
+    free_gap: np.ndarray,
+    source_indices: np.ndarray,
+    forces: np.ndarray,
+    *,
+    chunk_size: int = 256,
+) -> np.ndarray:
+    """Evaluate full-surface clearance from restricted nonzero forces.
+
+    Rows are queried in bounded chunks, so this verification never stores a
+    full or rectangular global compliance matrix.
+    """
+    gap = np.asarray(free_gap, dtype=float).reshape(-1)
+    indices = np.asarray(source_indices, dtype=np.int64).reshape(-1)
+    pressure = np.asarray(forces, dtype=float).reshape(-1)
+    if source.shape != (gap.size, gap.size):
+        raise ValueError("source shape must match free_gap size")
+    if indices.shape != pressure.shape or indices.size == 0:
+        raise ValueError("source_indices and forces must have equal nonzero size")
+    if np.any(indices < 0) or np.any(indices >= gap.size):
+        raise IndexError("source index outside compliance matrix")
+    if not np.all(np.isfinite(gap)) or not np.all(np.isfinite(pressure)):
+        raise ValueError("free_gap and forces must be finite")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+
+    clearance = gap.copy()
+    for start in range(0, gap.size, chunk_size):
+        stop = min(start + chunk_size, gap.size)
+        rows = np.arange(start, stop, dtype=np.int64)
+        clearance[start:stop] += source.get_block(rows, indices) @ pressure
+    return clearance
 
 
 def order_contact_sectors(

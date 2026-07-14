@@ -146,6 +146,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   tyre meridian and operator contact solve.
 - `docs/ppcg.md`: projected preconditioned CG and the tyre-sector spectral
   preconditioner.
+- `docs/potential_contact_zone.md`: warning-distance restriction, chunked
+  full-surface certification, and candidate-zone expansion for tyre contact.
 - `docs/naming_conventions.md`: naming style.
 - `ScSPD.md`: mathematical note on LCP uniqueness and SPD preservation.
 - `Interpolation_idea.md`: research note, not an implemented contract.

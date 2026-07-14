@@ -26,13 +26,17 @@ from .exceptions import (
     UnsupportedSolverError,
 )
 from .problem import LCP
-from .preconditioners import SectorSurfaceSpectralPreconditioner
+from .preconditioners import (
+    RestrictedProjectedPreconditioner,
+    SectorSurfaceSpectralPreconditioner,
+)
 from .result import LCPResult, LCPStatus
 from .solve import DEFAULT_METHOD, SOLVERS, solve
 
 __all__ = [
     "LCP",
     "SectorSurfaceSpectralPreconditioner",
+    "RestrictedProjectedPreconditioner",
     "LCPResult",
     "LCPStatus",
     "solve",
