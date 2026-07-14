@@ -12,6 +12,7 @@ dist/
 *.dylib
 *.msh
 *.geo
+!geo_files/geometry_v2.geo
 *.vtu
 *.vtk
 *.xdmf

@@ -45,6 +45,8 @@ fenicsx = [
   "basix==0.10.0",
   "ffcx==0.10.0",
   "ufl==2025.2.1",
+  "gmsh==4.13.1",
+  "meshio>=5.3",
 ]
 
 [tool.setuptools]
