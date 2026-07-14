@@ -10,7 +10,7 @@ cofebem-python/
 │   ├── hmatrices/            maintained H-matrix package
 │   │   └── low_rank_approx/  ACA and truncated-SVD implementations
 │   ├── lcp/                  maintained LCP model and solver API
-│   │   └── solvers/          PSOR/PGS, NNLS, Lemke, CCG
+│   │   └── solvers/          PSOR/PGS, NNLS, Lemke, CCG, PPCG
 │   ├── fenics/               current FEniCSx contact adapters
 │   ├── contact/              compliance builders and legacy contact solvers
 │   ├── bodies/               analytical rigid-indenter gap models
@@ -56,8 +56,9 @@ This is the preferred API for new complementarity-solver work.
 - `problem.py`: immutable validated `LCP(M, q)` for dense matrices or matrix
   operators.
 - `result.py`: `LCPResult`, statuses, and feasibility diagnostics.
+- `preconditioners.py`: mask-aware sector-surface spectral preconditioner.
 - `solve.py`: named solver dispatcher.
-- `solvers/`: maintained implementations.
+- `solvers/`: maintained implementations, including operator-only PPCG.
 
 The matching unit tests are under `tests/unit_tests/lcp`.
 
@@ -123,7 +124,7 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   reference.
 - `examples/tyre_contact.py`: arbitrary-normal adapter example.
 - `examples/tyre_dihedral_contact.py`: structured hex tyre, direct dihedral
-  H-matrix construction, and operator CCG plane-contact solve; preferred
+  H-matrix construction, and spectrally preconditioned operator PPCG solve; preferred
   tyre-symmetry reference.
 - `examples/generate_tyre_dihedral_mesh.py`: short editable wrapper exposing
   the axial and circumferential division counts.
@@ -143,6 +144,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
 - `docs/fenicsx_workflow.md`: executable integration lifecycle.
 - `docs/hmatrix_symmetry.md`: direct H-matrix construction from the sampled
   tyre meridian and operator contact solve.
+- `docs/ppcg.md`: projected preconditioned CG and the tyre-sector spectral
+  preconditioner.
 - `docs/naming_conventions.md`: naming style.
 - `ScSPD.md`: mathematical note on LCP uniqueness and SPD preservation.
 - `Interpolation_idea.md`: research note, not an implemented contract.

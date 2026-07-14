@@ -5,7 +5,7 @@ from typing import Callable
 from .exceptions import UnsupportedMatrixError, UnsupportedSolverError
 from .problem import LCP
 from .result import LCPResult
-from .solvers import ccg, ccg_v2, lemke, nnls, pgs, psor
+from .solvers import ccg, ccg_v2, lemke, nnls, pgs, ppcg, psor
 
 __all__ = ["solve", "SOLVERS", "DEFAULT_METHOD"]
 
@@ -16,6 +16,7 @@ SOLVERS: dict[str, Callable[..., LCPResult]] = {
     "lemke": lemke,
     "ccg": ccg,
     "ccg_v2": ccg_v2,
+    "ppcg": ppcg,
 }
 
 DEFAULT_METHOD = "lemke"
@@ -35,7 +36,7 @@ def solve(problem: LCP, method: str = DEFAULT_METHOD, **options: object) -> LCPR
         The linear complementarity problem to solve.
     method : str, optional
         Name of the solver to use. One of ``"psor"``, ``"pgs"``,
-        ``"nnls"``, ``"lemke"``, ``"ccg"``, or ``"ccg_v2"``. Defaults to
+        ``"nnls"``, ``"lemke"``, ``"ccg"``, ``"ccg_v2"``, or ``"ppcg"``. Defaults to
         ``"lemke"``, which is exact (up to floating-point error) and places
         no restriction on ``M``.
     **options
@@ -61,7 +62,8 @@ def solve(problem: LCP, method: str = DEFAULT_METHOD, **options: object) -> LCPR
     --------
     cofebem.lcp.solvers.psor, cofebem.lcp.solvers.pgs,
     cofebem.lcp.solvers.nnls, cofebem.lcp.solvers.lemke,
-    cofebem.lcp.solvers.ccg, cofebem.lcp.solvers.ccg_v2
+    cofebem.lcp.solvers.ccg, cofebem.lcp.solvers.ccg_v2,
+    cofebem.lcp.solvers.ppcg
 
     Examples
     --------
@@ -79,10 +81,10 @@ def solve(problem: LCP, method: str = DEFAULT_METHOD, **options: object) -> LCPR
             f"Unknown LCP solver {method!r}. Available solvers: {available}."
         ) from exc
 
-    if problem.uses_operator and method not in {"ccg", "ccg_v2"}:
+    if problem.uses_operator and method not in {"ccg", "ccg_v2", "ppcg"}:
         raise UnsupportedMatrixError(
             f"{method} requires an explicit dense matrix; matrix operators are "
-            "supported by 'ccg' and 'ccg_v2'."
+            "supported by 'ccg', 'ccg_v2', and 'ppcg'."
         )
 
     return solver(problem, **options)

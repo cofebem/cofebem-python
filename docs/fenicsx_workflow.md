@@ -135,7 +135,7 @@ The maintained `cofebem.lcp` result API is not yet connected to these adapters.
 When migrating, preserve the LCP sign convention `M=S_c`, `q=g`, and expose
 status plus primal, dual, and complementarity diagnostics.
 
-## H-matrix use
+## Generic-adapter H-matrix use
 
 H-matrix compression is currently manual:
 
@@ -153,9 +153,10 @@ H = HMatrix(
 )
 ```
 
-This call requires `dense_Sc` to exist first. Use `H @ x` for compressed
+This generic-adapter call requires `dense_Sc` to exist first. The dihedral tyre
+path below instead constructs directly from an entry source. Use `H @ x` for compressed
 matvecs and `H.stats()` to inspect storage. Validate the global matvec error and
-positive definiteness before using the approximation in CCG. The main
+positive definiteness before using the approximation in CCG/PPCG. The main
 `Contact.solve()` method does not yet dispatch to the H-matrix path.
 
 ## Dihedral tyre workflow
@@ -177,12 +178,21 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
   --axial-divisions 24 --circumferential-divisions 32 --regenerate
 ```
 
-The implementation reports sector alignment, reflection parity, and matrix
-reciprocity before applying an explicit reciprocal projection. It is currently
-serial and uses one reusable PETSc `PREONLY`+`LU` factorization. Internal
+The implementation reports sector alignment, reflection parity, sampled
+reciprocity, H-matrix storage, and entry-query counts. Symmetric H-matrix
+storage enforces reciprocity without constructing or projecting a global
+dense matrix. It is currently serial and uses one reusable PETSc
+`PREONLY`+`LU` factorization. Internal
 pressure is solved first as a free displacement and added to the initial gap;
 the final elastic right-hand side superposes inflation and resolved contact
 forces.
+
+The default LCP method is `ppcg`. Its projected free set includes positive
+pressure nodes and every zero-pressure node with negative clearance, allowing
+many active-set violations to be corrected in one iteration. A periodic
+Fourier transform around the tyre and a cosine transform along its axis apply
+an SPD inverse-compliance spectral model. Use
+`--pcg-preconditioner none` or `--contact-solver ccg_v2` for comparisons.
 
 ## Diagnostics
 

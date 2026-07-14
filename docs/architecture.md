@@ -95,7 +95,7 @@ flowchart LR
     K --> F
 ```
 
-The tyre branch is direct: it never reconstructs a global dense `S_c` and CCG
+The tyre branch is direct: it never reconstructs a global dense `S_c` and PPCG
 uses hierarchical matvecs. The generic `cofebem.fenics.Contact.solve()` adapter
 still uses the dense branch.
 
@@ -192,9 +192,10 @@ a matrix operator without conversion when supplied, and `solve()`
 dispatches by method, and every solver returns `LCPResult` with termination
 status and feasibility diagnostics. Available methods are PSOR/PGS, NNLS,
 Lemke, CCG, and CCG v2. NNLS and CCG are intended for symmetric positive-
-definite matrices. CCG and CCG v2 accept symmetric matrix operators; the other
-solvers require explicit dense matrices. Lemke may terminate on a secondary
-ray.
+definite matrices. CCG, CCG v2, and PPCG accept symmetric matrix operators;
+the other solvers require explicit dense matrices. PPCG updates all violating
+zero-pressure nodes together and accepts a masked SPD preconditioner. Lemke may
+terminate on a secondary ray.
 
 `cofebem/contact/lcp_solvers/` is the legacy interface still imported by the
 FEniCSx adapters and many examples. Its `CCG.solve_hm()` is currently the only
@@ -247,6 +248,8 @@ explicitly.
 - Generic adapters still store a dense operator before H-matrix compression;
   the dihedral tyre example does not.
 - H-matrix approximation is not automatically stabilized to preserve SPD.
+- The tyre spectral preconditioner assumes sector-major ordering and models
+  the compliance spectrum rather than exactly inverting the finite tyre.
 - Some research scripts have syntax errors, import-time execution, duplicated
   algorithms, or dependencies on untracked mesh and result files.
 
@@ -257,7 +260,7 @@ These are current-state constraints, not intended design requirements.
 The dependency-light test suite under `tests/unit_tests/hmatrices` and
 `tests/unit_tests/lcp` checks structural invariants, approximation accuracy,
 matvecs, dense reconstruction, arithmetic, solver validation, statuses, and
-complementarity results. A documentation-time run passed all 276 focused
+complementarity results. A documentation-time run passed all 301 focused
 H-matrix, LCP, and dihedral-compliance tests in `fenicsx-env`.
 
 FEniCSx changes need small end-to-end tests in `fenicsx-env` that additionally

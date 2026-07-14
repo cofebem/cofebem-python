@@ -46,7 +46,7 @@ from cofebem.fenics.dihedral_compliance import (
     sample_reference_transverse_compliance,
 )
 from cofebem.hmatrices import HMatrix
-from cofebem.lcp import LCP, solve
+from cofebem.lcp import LCP, SectorSurfaceSpectralPreconditioner, solve
 from cofebem.mesh.tyre_dihedral_hex import (
     CONTACT_TAG,
     FIXED_TAG,
@@ -172,8 +172,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--inflation-pressure", type=float, default=1.5e5)
     parser.add_argument(
         "--contact-solver",
-        choices=("ccg_v2", "ccg"),
-        default="ccg_v2",
+        choices=("ppcg", "ccg_v2", "ccg"),
+        default="ppcg",
+    )
+    parser.add_argument(
+        "--pcg-preconditioner",
+        choices=("spectral", "none"),
+        default="spectral",
+    )
+    parser.add_argument("--pcg-zero-mode-factor", type=float, default=1.0)
+    parser.add_argument(
+        "--pcg-beta-method",
+        choices=("pr_plus", "fletcher_reeves"),
+        default="pr_plus",
     )
     parser.add_argument("--max-iter", type=int, default=10000)
     parser.add_argument("--tol", type=float, default=1.0e-10)
@@ -203,6 +214,8 @@ def main() -> None:
         raise ValueError("H-matrix leaf size and maximum rank must be positive")
     if args.h_eta <= 0.0 or args.h_tol <= 0.0:
         raise ValueError("H-matrix eta and tolerance must be positive")
+    if args.pcg_zero_mode_factor <= 0.0:
+        raise ValueError("pcg-zero-mode-factor must be positive")
 
     mesh_path = args.mesh.resolve()
     if args.regenerate or not mesh_path.exists():
@@ -335,6 +348,19 @@ def main() -> None:
 
     options: dict[str, object] = {"tol": args.tol, "max_iter": args.max_iter}
     options["record_history"] = True
+    preconditioner_name = "none"
+    if args.contact_solver == "ppcg":
+        options["beta_method"] = args.pcg_beta_method
+        if args.pcg_preconditioner == "spectral":
+            options["preconditioner"] = SectorSurfaceSpectralPreconditioner(
+                ordering.points,
+                zero_mode_factor=args.pcg_zero_mode_factor,
+            )
+            preconditioner_name = "sector_spectral"
+            print(
+                "PPCG preconditioner=sector spectral "
+                f"(zero-mode factor={args.pcg_zero_mode_factor:g})"
+            )
     result = solve(LCP(Sc_h, gap), method=args.contact_solver, **options)
     print(result.message)
     print(
@@ -381,6 +407,9 @@ def main() -> None:
         inflation_displacement=inflation_values,
         residual=result.residual,
         status=result.status.value,
+        iterations=result.iterations,
+        contact_solver=args.contact_solver,
+        preconditioner=preconditioner_name,
     )
     print(f"wrote contact results under {output_dir}")
 

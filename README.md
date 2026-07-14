@@ -80,7 +80,8 @@ reference meridian, reconstructs the global vertical compliance using the
 tyre's discrete dihedral symmetry only when ACA requests an entry, builds a
 symmetric H-matrix directly from those queries, applies the internal inflation
 preload by linear superposition, and solves contact against the road plane
-with hierarchical matvecs:
+with hierarchical matvecs. The default contact solver is projected
+preconditioned CG (`ppcg`) with a tyre-sector spectral preconditioner:
 
 ```bash
 conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
@@ -88,6 +89,9 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
   --circumferential-divisions 32 \
   --regenerate
 ```
+
+Use `--pcg-preconditioner none` to measure the unpreconditioned projected
+method, or `--contact-solver ccg_v2` for the previous face-by-face baseline.
 
 Use `--sampling-only` to stop after constructing the H-matrix. The saved
 `compliance.npz` contains the sampled reference tensor and H-matrix statistics,
@@ -103,7 +107,7 @@ not a dense global `S_c`. Generated meshes, arrays, and VTK output are written b
 - `cofebem/hmatrices`: cluster trees, block-cluster trees, ACA/SVD low-rank
   approximations, and H-matrix operations.
 - `cofebem/lcp`: validated LCP model, solver results, dispatcher, and modern
-  PSOR/PGS, NNLS, Lemke, and CCG implementations.
+  PSOR/PGS, NNLS, Lemke, CCG, and PPCG implementations.
 - `cofebem/bodies`: analytical gap functions for rigid indenters.
 - `examples`: end-to-end studies, validation scripts, and benchmarks; several
   require local meshes/data and should be treated as research scripts.
@@ -116,7 +120,7 @@ and [the FEniCSx workflow](docs/fenicsx_workflow.md) for integration details.
 `cofebem.hmatrices.HMatrix` can be built either from a dense array or from a
 `MatrixEntrySource`. In the latter path, inadmissible near-field leaves request
 only their local blocks, while admissible leaves use partial ACA requests for
-selected rows and columns. `LCP` retains such a matrix operator and the CCG
+selected rows and columns. `LCP` retains such a matrix operator and the CCG/PPCG
 solvers consume its hierarchical matvec directly. `HMatrix.solve()` itself
 still uses dense LU and is not the contact-solve path.
 
@@ -124,12 +128,14 @@ The direct entry-source path is exercised end to end by the dihedral tyre
 example. The generic FEniCSx `Contact.solve()` adapter remains on its legacy
 dense compliance path. See [direct symmetry construction](docs/hmatrix_symmetry.md)
 for indexing, complexity, and diagnostics.
+The [PPCG solver note](docs/ppcg.md) describes the projected PR+ iteration and
+the sector-spectral preconditioner.
 
 ## Known scope
 
 The most reliable dependency-light components are `cofebem.hmatrices` and
 `cofebem.lcp`; together with the dihedral compliance tests, their focused suite
-currently contains 276 passing tests. The
+currently contains 301 passing tests. The
 FEniCSx adapters are prototypes with important assumptions: 3D vector CG1-like
 spaces, direct PETSc solves, serial-oriented indexing, and use of private
 `LinearProblem` attributes. The architecture documentation records these

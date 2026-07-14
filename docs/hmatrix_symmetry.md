@@ -48,11 +48,16 @@ triangle is built and reciprocal blocks are applied by transposition.
 The contact problem is passed through the maintained API as
 
 ```python
-result = solve(LCP(Sc_h, gap), method="ccg_v2")
+result = solve(
+    LCP(Sc_h, gap),
+    method="ppcg",
+    preconditioner=sector_spectral_preconditioner,
+)
 ```
 
-CCG only invokes `Sc_h @ vector`; it does not call `HMatrix.solve()` or
-`HMatrix.to_dense()`. Other LCP methods are rejected for operator problems.
+PPCG only invokes `Sc_h @ vector`; it does not call `HMatrix.solve()` or
+`HMatrix.to_dense()`. CCG variants also accept operators; dense-only LCP
+methods are rejected for operator problems.
 
 ## Diagnostics and limitations
 
@@ -64,5 +69,5 @@ a dense `S_c`.
 The current implementation is serial and uses a reusable PETSc LU
 factorization for the `2 * n_axial` sampling solves. ACA tolerance is local to
 each admissible block and does not by itself guarantee that the approximation
-remains positive definite. CCG detects non-positive search curvature and
+remains positive definite. PPCG detects non-positive search curvature and
 reports numerical breakdown if that invariant is lost.

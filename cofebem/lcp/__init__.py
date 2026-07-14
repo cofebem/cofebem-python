@@ -12,7 +12,7 @@ This subpackage provides the shared vocabulary used by every LCP solver in
   :class:`LCPError`.
 
 See :mod:`cofebem.lcp.solvers` for the available solvers (``psor``, ``pgs``,
-``nnls``, ``lemke``, ``ccg``, ``ccg_v2``).
+``nnls``, ``lemke``, ``ccg``, ``ccg_v2``, ``ppcg``).
 """
 
 from __future__ import annotations
@@ -26,11 +26,13 @@ from .exceptions import (
     UnsupportedSolverError,
 )
 from .problem import LCP
+from .preconditioners import SectorSurfaceSpectralPreconditioner
 from .result import LCPResult, LCPStatus
 from .solve import DEFAULT_METHOD, SOLVERS, solve
 
 __all__ = [
     "LCP",
+    "SectorSurfaceSpectralPreconditioner",
     "LCPResult",
     "LCPStatus",
     "solve",

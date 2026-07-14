@@ -14,6 +14,8 @@ keyword-only options and returns an
 - :func:`ccg` / :func:`ccg_v2` -- constrained conjugate-gradient methods for
   symmetric positive-definite ``M``, as commonly used for normal-contact
   pressure problems.
+- :func:`ppcg` -- projected preconditioned CG with simultaneous projected
+  active-set updates.
 """
 
 from __future__ import annotations
@@ -22,5 +24,6 @@ from .ccg import ccg, ccg_v2
 from .lemke import lemke
 from .nnls import nnls
 from .psor import pgs, psor
+from .ppcg import ppcg
 
-__all__ = ["psor", "pgs", "nnls", "lemke", "ccg", "ccg_v2"]
+__all__ = ["psor", "pgs", "nnls", "lemke", "ccg", "ccg_v2", "ppcg"]

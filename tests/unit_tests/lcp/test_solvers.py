@@ -18,7 +18,7 @@ from cofebem.lcp.exceptions import (
     UnsupportedMatrixError,
     UnsupportedSolverError,
 )
-from cofebem.lcp.solvers import ccg, ccg_v2, lemke, nnls, pgs, psor
+from cofebem.lcp.solvers import ccg, ccg_v2, lemke, nnls, pgs, ppcg, psor
 
 
 # ---------------------------------------------------------------------------
@@ -84,14 +84,16 @@ class TestSolveDispatcher:
     def test_default_method_constant(self):
         assert DEFAULT_METHOD == "lemke"
 
-    def test_solvers_dict_contains_all_six(self):
-        for name in ("psor", "pgs", "nnls", "lemke", "ccg", "ccg_v2"):
+    def test_solvers_dict_contains_all_methods(self):
+        for name in ("psor", "pgs", "nnls", "lemke", "ccg", "ccg_v2", "ppcg"):
             assert name in SOLVERS
 
     def test_default_call_converges(self, problem_spd_2x2):
         assert solve(problem_spd_2x2).converged
 
-    @pytest.mark.parametrize("method", ["psor", "pgs", "nnls", "lemke", "ccg", "ccg_v2"])
+    @pytest.mark.parametrize(
+        "method", ["psor", "pgs", "nnls", "lemke", "ccg", "ccg_v2", "ppcg"]
+    )
     def test_dispatches_to_each_solver(self, method, problem_spd_2x2):
         result = solve(problem_spd_2x2, method=method)
         assert result.converged
@@ -547,3 +549,77 @@ class TestCCGv2:
     def test_iterations_counts_cg_steps(self, problem_spd_2x2):
         result = ccg_v2(problem_spd_2x2)
         assert result.iterations >= 0
+
+
+class TestPPCG:
+    @pytest.mark.parametrize(
+        "fixture_name",
+        ["problem_trivial", "problem_spd_2x2", "problem_mixed", "problem_all_active"],
+    )
+    def test_contact_cases(self, fixture_name, request):
+        problem = request.getfixturevalue(fixture_name)
+        result = ppcg(problem)
+        assert result.converged
+        check_lcp_solution(result, problem.M, problem.q)
+
+    def test_operator_problem(self):
+        class Operator:
+            shape = (2, 2)
+            symmetric = True
+
+            def __matmul__(self, vector):
+                return np.array(
+                    [2.0 * vector[0] + vector[1], vector[0] + 2.0 * vector[1]]
+                )
+
+        result = solve(LCP(Operator(), [-1.0, -1.0]), method="ppcg")
+        assert result.converged
+        np.testing.assert_allclose(result.z, [1.0 / 3.0, 1.0 / 3.0])
+
+    def test_preconditioner_is_used(self, problem_spd_2x2):
+        calls = 0
+
+        def diagonal_preconditioner(gradient, free):
+            nonlocal calls
+            calls += 1
+            return np.where(free, gradient / 2.0, 0.0)
+
+        result = ppcg(problem_spd_2x2, preconditioner=diagonal_preconditioner)
+        assert result.converged
+        assert calls > 0
+
+    def test_bad_preconditioner_shape_raises(self, problem_spd_2x2):
+        with pytest.raises(InvalidSolverOptionError, match="preconditioner"):
+            ppcg(
+                problem_spd_2x2,
+                preconditioner=lambda gradient, free: np.zeros(gradient.size + 1),
+            )
+
+    @pytest.mark.parametrize("beta_method", ["pr_plus", "fletcher_reeves"])
+    def test_beta_methods(self, problem_spd_large, beta_method):
+        result = ppcg(problem_spd_large, beta_method=beta_method)
+        assert result.converged
+        check_lcp_solution(result, problem_spd_large.M, problem_spd_large.q)
+
+    def test_invalid_beta_method_raises(self, problem_spd_2x2):
+        with pytest.raises(InvalidSolverOptionError, match="beta_method"):
+            ppcg(problem_spd_2x2, beta_method="bogus")
+
+    def test_history_and_message(self, problem_spd_2x2):
+        result = ppcg(problem_spd_2x2, record_history=True)
+        assert result.residual_history is not None
+        assert "operator application" in result.message
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_random_spd_solution_matches_lemke(self, seed):
+        rng = np.random.default_rng(seed)
+        factor = rng.standard_normal((8, 8))
+        matrix = factor.T @ factor + 0.2 * np.eye(8)
+        q = rng.standard_normal(8)
+        problem = LCP(matrix, q)
+
+        result = ppcg(problem, tol=1.0e-11)
+        reference = lemke(problem, tol=1.0e-11)
+
+        assert result.converged
+        np.testing.assert_allclose(result.z, reference.z, rtol=1.0e-8, atol=1.0e-9)

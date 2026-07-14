@@ -97,7 +97,7 @@ When changing compliance construction or contact solving, preserve and test:
   must refer to the same contact unknown in the same order.
 - Reciprocity: a linear elastic compliance should be symmetric up to the
   assembly/solver tolerance. Measure asymmetry before silently symmetrizing.
-- Positive definiteness: CCG and NNLS paths require an SPD operator. The
+- Positive definiteness: CCG, PPCG, and NNLS paths require an SPD operator. The
   structure must be sufficiently constrained to remove rigid-body modes.
 - Complementarity: report primal violation, dual violation, and
   complementarity, not only an algorithm-specific stopping metric.
@@ -141,11 +141,13 @@ but drives admissible blocks with selected partial-ACA row/column queries. Do
 not call `to_dense()`, `lu()`, or `solve()` in a direct hierarchical workflow:
 all three intentionally assemble a global dense matrix.
 
-The maintained `cofebem.lcp` CCG solvers accept symmetric matrix operators and
-therefore provide the hierarchical contact-solve path. Other maintained LCP
-solvers require dense matrices. `examples/tyre_dihedral_contact.py` is the
-end-to-end reference; the generic `cofebem.fenics.Contact.solve()` adapter is
-still connected to the dense legacy path.
+The maintained `cofebem.lcp` CCG and PPCG solvers accept symmetric matrix
+operators and therefore provide the hierarchical contact-solve path. PPCG
+preconditioners must be SPD after restriction to the projected free set.
+Other maintained LCP solvers require dense matrices.
+`examples/tyre_dihedral_contact.py` is the end-to-end reference; the generic
+`cofebem.fenics.Contact.solve()` adapter is still connected to the dense legacy
+path.
 
 ## Change and validation practice
 
