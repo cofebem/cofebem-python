@@ -1,4 +1,5 @@
 import numpy as np
+import time
 import ufl
 
 from mpi4py import MPI
@@ -20,7 +21,17 @@ from dolfinx.fem import (
     locate_dofs_topological,
     Expression,
 )
-from dolfinx.fem.petsc import NonlinearProblem
+from dolfinx.fem.petsc import (
+    NonlinearProblem,
+    LinearProblem,
+    assemble_matrix,
+    assemble_vector,
+    apply_lifting,
+)
+
+from cofebem.fenics.contact import Contact
+from cofebem.bodies.sphere_indenter import Sphere
+from cofebem.lcp import solve
 
 comm = MPI.COMM_WORLD
 
@@ -46,7 +57,7 @@ nu = 0.3
 kpen = 1.0e12
 
 R = 0.35
-delta_final = 0.1
+delta = 0.1
 nsteps = 10
 
 
@@ -136,13 +147,13 @@ contact_center = np.array(
 print(f"Contact center: {contact_center}")
 print(f"Contact height H: {H}")
 print(f"Sphere radius R: {R}")
-print(f"Final indentation delta: {delta_final}")
+print(f"Final indentation delta: {delta}")
 
 
 V = functionspace(mesh, ("Lagrange", 1, (gdim,)))
 
 u = Function(V)
-u.name = "u"
+u.name = "u_pen"
 
 v = ufl.TestFunction(V)
 
@@ -158,7 +169,7 @@ t = Constant(mesh, PETSc.ScalarType((0.0, 0.0, 0.0)))
 xc0 = Constant(mesh, PETSc.ScalarType(contact_center[0]))
 yc0 = Constant(mesh, PETSc.ScalarType(contact_center[1]))
 Rc = Constant(mesh, PETSc.ScalarType(R))
-z0 = Constant(mesh, PETSc.ScalarType(H))
+z0 = Constant(mesh, PETSc.ScalarType(H - delta))
 
 
 def eps(w):
@@ -201,15 +212,15 @@ bc = dirichletbc(uD, dofs_D, V)
 petsc_options = {
     "snes_type": "newtonls",
     "snes_linesearch_type": "bt",
-    "snes_atol": 1e-3,
-    "snes_rtol": 1e-4,
+    "snes_atol": 1e-10,
+    "snes_rtol": 1e-8,
     "snes_max_it": 100,
     "snes_monitor": None,
     "ksp_type": "preonly",
     "pc_type": "lu",
 }
 
-problem = NonlinearProblem(
+pen_problem = NonlinearProblem(
     F,
     u,
     bcs=[bc],
@@ -218,63 +229,128 @@ problem = NonlinearProblem(
     petsc_options_prefix="penalty_contact_",
 )
 
+pen_start = time.time()
+pen_problem.solve()
+t_pen = time.time() - pen_start
+u.x.scatter_forward()
 
-for i in range(1, nsteps + 1):
-    delta = delta_final * i / nsteps
-    z0.value = PETSc.ScalarType(H - delta)
+print(f"t_pen = {t_pen}")
+reason = pen_problem.solver.getConvergedReason()
+niter = pen_problem.solver.getIterationNumber()
 
-    print()
-    print(f"Load step {i}/{nsteps}, delta = {delta}")
+print(f"SNES iterations: {niter}")
+print(f"SNES converged reason: {reason}")
+print("=================================================")
+# ============================================================
+#                     Flexibility method
+# ============================================================
 
-    problem.solve()
-    u.x.scatter_forward()
+tc = Function(V)
+tc.name = "contact_traction"
 
-    reason = problem.solver.getConvergedReason()
-    niter = problem.solver.getIterationNumber()
+u2 = ufl.TrialFunction(V)
+v2 = ufl.TestFunction(V)
 
-    print(f"SNES iterations: {niter}")
-    print(f"SNES converged reason: {reason}")
+a_flex = ufl.inner(sigma(u2), eps(v2)) * ufl.dx
+L_flex = (
+    ufl.dot(f, v2) * ufl.dx
+    + ufl.dot(t, v2) * ds(neumann_id)
+    + ufl.dot(tc, v2) * ds(contact_id)
+)
 
-    if reason <= 0:
-        raise RuntimeError(f"SNES did not converge at load step {i}. Reason: {reason}")
+flex_problem = LinearProblem(
+    a_flex,
+    L_flex,
+    bcs=[bc],
+    petsc_options_prefix="flex_contact_",
+    petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
+)
+u_flex = flex_problem.u
+u_flex.name = "u_flex"
+
+indenter = Sphere(
+    center=np.array([contact_center[0], contact_center[1], H + R - delta]), radius=R
+)
+
+t0 = time.time()
+contact = Contact(
+    mesh=mesh,
+    indenter=indenter,
+    tc=tc,
+    Gamma_c=facets_top,
+    ds=ds,
+    Gamma_c_id=contact_id,
+    problem=flex_problem,
+    solver="ccg",
+)
+t_sc_build = time.time() - t0
+print(f"\nSc build (once): {t_sc_build:.3f} s " f"({contact.Sc.shape[0]} contact dofs)")
+
+t_flex_start = time.time()
+contact.solve(max_iter=10000, tol=1e-7, p0=1e9)
+contact.apply_contact_forces()
+flex_problem.solve()
+t_flex = time.time() - t_flex_start + t_sc_build
+
+print(f"t_flex = {t_flex}")
 
 
-def interpolation_points(V):
-    pts = V.element.interpolation_points
-    if callable(pts):
-        return pts()
-    return pts
+# for i in range(1, nsteps + 1):
+#     delta = delta_final * i / nsteps
+#     z0.value = PETSc.ScalarType(H - delta)
+
+#     print()
+#     print(f"Load step {i}/{nsteps}, delta = {delta}")
+
+#     problem.solve()
+#     u.x.scatter_forward()
+
+#     reason = problem.solver.getConvergedReason()
+#     niter = problem.solver.getIterationNumber()
+
+#     print(f"SNES iterations: {niter}")
+#     print(f"SNES converged reason: {reason}")
+
+#     if reason <= 0:
+#         raise RuntimeError(f"SNES did not converge at load step {i}. Reason: {reason}")
 
 
-W = functionspace(mesh, ("DG", 0))
+# def interpolation_points(V):
+#     pts = V.element.interpolation_points
+#     if callable(pts):
+#         return pts()
+#     return pts
 
-gap_fun = Function(W)
-gap_fun.name = "gap"
 
-pn_fun = Function(W)
-pn_fun.name = "penalty_pressure"
+# W = functionspace(mesh, ("DG", 0))
 
-zobs_fun = Function(W)
-zobs_fun.name = "z_obstacle"
+# gap_fun = Function(W)
+# gap_fun.name = "gap"
 
-pts = interpolation_points(W)
+# pn_fun = Function(W)
+# pn_fun.name = "penalty_pressure"
 
-gap_expr = Expression(gap, pts)
-pn_expr = Expression(pn, pts)
-zobs_expr = Expression(zobs, pts)
+# zobs_fun = Function(W)
+# zobs_fun.name = "z_obstacle"
 
-gap_fun.interpolate(gap_expr)
-pn_fun.interpolate(pn_expr)
-zobs_fun.interpolate(zobs_expr)
+# pts = interpolation_points(W)
 
-with VTKFile(comm, "u_penalty_rigid_contact.pvd", "w") as vtk:
-    vtk.write_function(u)
+# gap_expr = Expression(gap, pts)
+# pn_expr = Expression(pn, pts)
+# zobs_expr = Expression(zobs, pts)
 
-with VTKFile(comm, "gap_penalty_rigid_contact.pvd", "w") as vtk:
-    vtk.write_function(gap_fun)
+# gap_fun.interpolate(gap_expr)
+# pn_fun.interpolate(pn_expr)
+# zobs_fun.interpolate(zobs_expr)
 
-with VTKFile(comm, "pressure_penalty_rigid_contact.pvd", "w") as vtk:
-    vtk.write_function(pn_fun)
+# with VTKFile(comm, "u_penalty_rigid_contact.pvd", "w") as vtk:
+#     vtk.write_function(u)
 
-with VTKFile(comm, "obstacle_height.pvd", "w") as vtk:
-    vtk.write_function(zobs_fun)
+# with VTKFile(comm, "gap_penalty_rigid_contact.pvd", "w") as vtk:
+#     vtk.write_function(gap_fun)
+
+# with VTKFile(comm, "pressure_penalty_rigid_contact.pvd", "w") as vtk:
+#     vtk.write_function(pn_fun)
+
+# with VTKFile(comm, "obstacle_height.pvd", "w") as vtk:
+#     vtk.write_function(zobs_fun)

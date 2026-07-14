@@ -9,7 +9,6 @@ dist/
 *.dll
 *.dylib
 *.msh
-*.geo
 *.vtu
 *.vtk
 *.xdmf

@@ -162,7 +162,7 @@ def ccg(
     ----------
     J. J. Moré and G. Toraldo, “On the Solution of Large Quadratic Programming Problems with Bound Constraints,” SIAM Journal on Optimization, 1(1), pp. 93–113, 1991. DOI: 10.1137/0801008.
     M. Paggi, A. Bemporad, and related contributors, “Computational Methods for Contact Problems with Roughness,” in CISM International Centre for Mechanical Sciences, 2020.
-    
+
     See Also
     --------
     ccg_v2 : A more robust active-set CG method with explicit active-set
@@ -488,7 +488,7 @@ def ccg_v2(
             break
 
     w = M @ z + q
-    scale = 1.0 + np.linalg.norm(z, ord=np.inf) + np.linalg.norm(w, ord=np.inf)
+    scale = 1.0  # + np.linalg.norm(z, ord=np.inf) + np.linalg.norm(w, ord=np.inf)
     residual = float(np.linalg.norm(np.minimum(z, w), ord=np.inf)) / scale
 
     if status == LCPStatus.MAX_ITERATIONS and residual <= tol:

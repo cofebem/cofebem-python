@@ -2,6 +2,7 @@ import numpy as np
 from mpi4py import MPI
 from petsc4py import PETSc
 from tqdm import tqdm
+import time
 
 from dolfinx.mesh import create_box, locate_entities_boundary, meshtags, CellType
 from dolfinx.io import VTKFile
@@ -553,7 +554,7 @@ if __name__ == "__main__":
     assert nrm_gamma.shape[0] == Ic_gamma.size
 
     p0 = np.zeros(Ic_gamma.size, dtype=np.float64)
-
+    start = time.time()
     apply_Sc = ScNormalMatvec(
         A=A,
         Ic=Ic_gamma,
@@ -566,10 +567,11 @@ if __name__ == "__main__":
         apply_M=apply_Sc,
         q=q_gamma,
         z0=p0,
-        tol=1e-10,
+        tol=1e-8,
         max_iter=1000,
     )
-
+    t_matfree = time.time() - start
+    print(f" CPU time = {t_matfree}")
     print(info)
     print("Number of matrix-free Sc matvecs:", apply_Sc.n_matvec)
 

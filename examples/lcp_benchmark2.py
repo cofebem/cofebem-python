@@ -338,14 +338,14 @@ for k in k_values:
 
     t0_ccg = time.time()
     w_ccg, _, _ = CCG(
-        Sc_, g0, max_iter=10000, tol=1e-7, err_type="displacement", p0=1e9
+        Sc_, g0, max_iter=10000, tol=1e-10, err_type="displacement", p0=1e9
     ).solve()
     t1_ccg = time.time()
     t_ccg = t1_ccg - t0_ccg
     cpu_times_ccg.append(t_ccg)
 
     t0_ccg_new = time.time()
-    w_ccg_new, _, _ = ccg_lcp(Sc_, g0, max_iter=10000, tol=1e-7)
+    w_ccg_new, _, _ = ccg_lcp(Sc_, g0, max_iter=10000, tol=1e-10)
     t1_ccg_new = time.time()
     t_ccg_new = t1_ccg_new - t0_ccg_new
     cpu_times_ccg_new.append(t_ccg_new)
@@ -396,39 +396,39 @@ for k in k_values:
 # =========================
 
 plt.figure(figsize=(9, 6))
-plt.plot(contact_sizes, cpu_times_nnls, "o-", linewidth=2, markersize=7, label="NNLS")
-plt.plot(contact_sizes, cpu_times_ccg, "s-", linewidth=2, markersize=7, label="CCG")
+# plt.plot(contact_sizes, cpu_times_nnls, "o-", linewidth=2, markersize=7, label="NNLS")
+plt.plot(contact_sizes, cpu_times_ccg, "s-", linewidth=2, markersize=7, label="CCG v1")
 plt.plot(
-    contact_sizes, cpu_times_ccg_new, "y-", linewidth=2, markersize=7, label="CCG v2"
+    contact_sizes, cpu_times_ccg_new, "o-", linewidth=2, markersize=7, label="CCG v2"
 )
-plt.plot(contact_sizes, cpu_times_lemke, "^-", linewidth=2, markersize=7, label="Lemke")
-plt.plot(contact_sizes, cpu_times_psor, "d-", linewidth=2, markersize=7, label="PSOR")
+# plt.plot(contact_sizes, cpu_times_lemke, "^-", linewidth=2, markersize=7, label="Lemke")
+# plt.plot(contact_sizes, cpu_times_psor, "d-", linewidth=2, markersize=7, label="PSOR")
 plt.grid(True, which="both", linestyle="--", alpha=0.7)
-plt.xlabel("Number of contact DOFs", fontsize=12)
+plt.xlabel("Number of contact nodes", fontsize=12)
 plt.ylabel("CPU time [s]", fontsize=12)
-plt.title("CPU time comparison of LCP solvers", fontsize=14)
+plt.title("CPU time comparison of GPCG solvers", fontsize=14)
 plt.legend(fontsize=11)
 plt.tight_layout()
 plt.show()
 
 plt.figure(figsize=(9, 6))
+# plt.semilogy(
+#     contact_sizes, errors_nnls, "o-", linewidth=2, markersize=7, label="NNLS vs Lemke"
+# )
 plt.semilogy(
-    contact_sizes, errors_nnls, "o-", linewidth=2, markersize=7, label="NNLS vs Lemke"
-)
-plt.semilogy(
-    contact_sizes, errors_ccg, "s-", linewidth=2, markersize=7, label="CCG vs Lemke"
+    contact_sizes, errors_ccg, "s-", linewidth=2, markersize=7, label="CCG v1 vs Lemke"
 )
 plt.semilogy(
     contact_sizes,
     errors_ccg_new,
-    "y-",
+    "o-",
     linewidth=2,
     markersize=7,
     label="CCG v2 vs Lemke",
 )
-plt.semilogy(
-    contact_sizes, errors_psor, "d-", linewidth=2, markersize=7, label="PSOR vs Lemke"
-)
+# plt.semilogy(
+#     contact_sizes, errors_psor, "d-", linewidth=2, markersize=7, label="PSOR vs Lemke"
+# )
 # plt.semilogy(
 #     contact_sizes, errors_lemke, "^-", linewidth=2, markersize=7, label="Lemke vs Lemke"
 # )
