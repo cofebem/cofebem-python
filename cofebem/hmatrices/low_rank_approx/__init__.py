@@ -13,10 +13,12 @@ from .truncated_svd import truncated_svd
 from .aca_full import aca_full
 from .aca_partial import aca_partial
 from .aca_plus import aca_plus
+from .aca_partial_entry import aca_partial_entry
 
 __all__ = [
     "truncated_svd",
     "aca_full",
     "aca_partial",
     "aca_plus",
+    "aca_partial_entry",
 ]

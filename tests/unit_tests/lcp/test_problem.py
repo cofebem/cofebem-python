@@ -50,6 +50,19 @@ class TestLCPConstruction:
         assert problem.q.ndim == 1
         assert problem.q.dtype == np.float64
 
+    def test_matrix_operator_is_retained_without_conversion(self):
+        class Operator:
+            shape = (2, 2)
+            symmetric = True
+
+            def __matmul__(self, vector):
+                return 2.0 * vector
+
+        operator = Operator()
+        problem = LCP(operator, [-1.0, -1.0])
+        assert problem.M is operator
+        assert problem.uses_operator
+
 
 class TestLCPValidation:
     def test_complex_M_raises(self):

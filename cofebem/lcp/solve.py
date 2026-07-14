@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .exceptions import UnsupportedSolverError
+from .exceptions import UnsupportedMatrixError, UnsupportedSolverError
 from .problem import LCP
 from .result import LCPResult
 from .solvers import ccg, ccg_v2, lemke, nnls, pgs, psor
@@ -78,5 +78,11 @@ def solve(problem: LCP, method: str = DEFAULT_METHOD, **options: object) -> LCPR
         raise UnsupportedSolverError(
             f"Unknown LCP solver {method!r}. Available solvers: {available}."
         ) from exc
+
+    if problem.uses_operator and method not in {"ccg", "ccg_v2"}:
+        raise UnsupportedMatrixError(
+            f"{method} requires an explicit dense matrix; matrix operators are "
+            "supported by 'ccg' and 'ccg_v2'."
+        )
 
     return solver(problem, **options)

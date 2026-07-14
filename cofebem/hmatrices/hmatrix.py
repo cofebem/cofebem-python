@@ -6,24 +6,27 @@ from scipy.linalg import lu_factor, lu_solve
 
 from .cluster_tree import ClusterTree
 from .block_cluster_tree import Block, BlockClusterTree, _block_add
+from .entry_source import MatrixEntrySource
 
 
 class HMatrix:
-    """Hierarchical matrix (H-matrix) built from a point set and a dense matrix.
+    """Hierarchical matrix built from a point set and matrix entry provider.
 
     Constructs a :class:`ClusterTree` over *pts* and then a
     :class:`BlockClusterTree` that compresses admissible blocks of *A* with a
-    chosen low-rank approximation method.  Provides matrix-vector products,
-    arithmetic operators, dense assembly, LU-based solve, diagnostics, and
-    a block-structure visualisation.
+    chosen low-rank approximation method. *A* may be dense or queried through
+    :class:`MatrixEntrySource`. Provides matrix-vector products, arithmetic
+    operators, dense assembly, LU-based solve, diagnostics, and a block-
+    structure visualisation.
 
     Parameters
     ----------
     pts : ndarray of shape (n, d)
         Spatial coordinates of the degrees of freedom.  The i-th row
         corresponds to the i-th row/column of *A*.
-    A : ndarray of shape (n, n)
-        Matrix to compress.  Must be square and consistent with *pts*.
+    A : ndarray or MatrixEntrySource of shape (n, n)
+        Matrix to compress. Entry sources are queried blockwise and do not
+        require a global dense matrix.
     leaf_size : int
         Maximum cluster size for the cluster tree.
     eta : float
@@ -62,6 +65,7 @@ class HMatrix:
         split: str = "pca",
         lr_approx: str = "aca_partial",
         symmetric: bool = False,
+        max_rank: int = 50,
     ) -> None:
         self.pts = pts
         self.tol = tol
@@ -74,8 +78,25 @@ class HMatrix:
         self.block_tree = BlockClusterTree(
             self.tree, self.tree, A,
             eta=eta, tol=tol, lr_approx=lr_approx, symmetric=symmetric,
+            max_rank=max_rank,
         )
         self._lu_cache: Optional[tuple] = None
+
+    @classmethod
+    def from_entry_source(
+        cls,
+        pts: np.ndarray,
+        source: MatrixEntrySource,
+        **options,
+    ) -> "HMatrix":
+        """Build directly from selected source queries, never a dense matrix."""
+        return cls(pts, source, **options)
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Matrix dimensions."""
+        n = len(self.pts)
+        return n, n
 
     # ------------------------------------------------------------------
     # Internal constructor used by arithmetic operators

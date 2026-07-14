@@ -8,7 +8,9 @@ from .low_rank_approx import (
     aca_partial,
     aca_plus,
     truncated_svd,
+    aca_partial_entry,
 )
+from .entry_source import MatrixEntrySource
 
 
 @dataclass
@@ -130,8 +132,9 @@ class BlockClusterTree:
         Cluster tree for the row indices.
     col_tree : ClusterTree
         Cluster tree for the column indices.
-    A : ndarray of shape (n, n)
-        The matrix to partition and compress.
+    A : ndarray or MatrixEntrySource of shape (n, n)
+        The matrix to compress, either materialised or available through
+        block queries.
     eta : float
         Admissibility parameter.  Larger values admit more low-rank blocks.
     tol : float
@@ -158,6 +161,7 @@ class BlockClusterTree:
         tol: float = 1e-6,
         lr_approx: str = "aca_full",
         symmetric: bool = False,
+        max_rank: int = 50,
     ):
         self.row_tree = row_tree
         self.col_tree = col_tree
@@ -165,7 +169,16 @@ class BlockClusterTree:
         self.tol = tol
         self.lr_approx = lr_approx
         self.symmetric = symmetric
+        self.max_rank = max_rank
         self.blocks: List[Block] = []
+        self._entry_source = not isinstance(A, np.ndarray)
+        if self._entry_source:
+            if not isinstance(A, MatrixEntrySource):
+                raise TypeError("A must be a NumPy array or MatrixEntrySource")
+            if lr_approx != "aca_partial":
+                raise ValueError(
+                    "entry-source H-matrices support lr_approx='aca_partial' only"
+                )
         self._A = A
         self._build(row_tree.root, col_tree.root)
         del self._A
@@ -198,12 +211,19 @@ class BlockClusterTree:
 
     def _make_dense(self, a: Cluster, b: Cluster):
         """Append a dense block for the inadmissible pair ``(a, b)``."""
-        B = self._A[np.ix_(a.idx, b.idx)]
+        B = self._get_block(a.idx, b.idx)
         self.blocks.append(Block(a, b, "dense", dense=B))
 
     def _make_lr(self, a: Cluster, b: Cluster):
         """Append a low-rank block for the admissible pair ``(a, b)``."""
-        B = self._A[np.ix_(a.idx, b.idx)]
+        if self._entry_source:
+            U, V = aca_partial_entry(
+                self._A, a.idx, b.idx, self.tol, self.max_rank
+            )
+            self.blocks.append(Block(a, b, "lr", U=U, V=V, rank=U.shape[1]))
+            return
+
+        B = self._get_block(a.idx, b.idx)
 
         match self.lr_approx:
             case "truncated_svd":
@@ -219,8 +239,22 @@ class BlockClusterTree:
                     f"Unknown low rank approximation method: {self.lr_approx}"
                 )
 
-        U, V = lr_method(B, self.tol)
+        U, V = lr_method(B, self.tol, self.max_rank)
         self.blocks.append(Block(a, b, "lr", U=U, V=V, rank=U.shape[1]))
+
+    def _get_block(self, rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
+        """Read one subblock from a dense array or an entry source."""
+        if self._entry_source:
+            block = self._A.get_block(rows, columns)
+        else:
+            block = self._A[np.ix_(rows, columns)]
+        block = np.asarray(block, dtype=float)
+        expected = (len(rows), len(columns))
+        if block.shape != expected:
+            raise ValueError(
+                f"entry source returned shape {block.shape}, expected {expected}"
+            )
+        return block
 
     def _copy_with_blocks(self, new_blocks: List[Block]) -> "BlockClusterTree":
         """Return a shallow copy sharing trees/parameters but using *new_blocks*."""
@@ -231,6 +265,8 @@ class BlockClusterTree:
         obj.tol = self.tol
         obj.lr_approx = self.lr_approx
         obj.symmetric = self.symmetric
+        obj.max_rank = self.max_rank
+        obj._entry_source = self._entry_source
         obj.blocks = new_blocks
         return obj
 

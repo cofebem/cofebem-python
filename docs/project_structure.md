@@ -41,6 +41,8 @@ This is the primary location for hierarchical-matrix work.
 - `cluster_tree.py`: geometric binary clustering and leaf ordering.
 - `block_cluster_tree.py`: admissibility, recursive block partition, dense and
   low-rank block storage.
+- `entry_source.py`: protocol for constructing blocks from implicit entry
+  queries without a global dense matrix.
 - `hmatrix.py`: construction, matvec, arithmetic, dense reconstruction,
   diagnostics, and visualization.
 - `low_rank_approx/`: partial ACA, full ACA, ACA+, and truncated SVD.
@@ -51,7 +53,8 @@ The matching unit tests are under `tests/unit_tests/hmatrices`.
 
 This is the preferred API for new complementarity-solver work.
 
-- `problem.py`: immutable validated `LCP(M, q)`.
+- `problem.py`: immutable validated `LCP(M, q)` for dense matrices or matrix
+  operators.
 - `result.py`: `LCPResult`, statuses, and feasibility diagnostics.
 - `solve.py`: named solver dispatcher.
 - `solvers/`: maintained implementations.
@@ -67,7 +70,8 @@ The matching unit tests are under `tests/unit_tests/lcp`.
 - `contact_normal.py`: varying-normal prototype for curved contact surfaces.
 - `linear_problem.py`: helper for a small linear-elastic system.
 - `dihedral_compliance.py`: reference-meridian y/z sampling with one reusable
-  PETSc LU factorization and tensor rotation into global-z road compliance.
+  PETSc LU factorization and an entry source that rotates only requested
+  global-z compliance entries.
 
 These files rely on DOLFINx private `LinearProblem` attributes and require
 focused testing against the active Conda environment.
@@ -118,8 +122,9 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
 - `cofebem/pipeline_fenicsx_minimal.py`: preferred minimal flat-contact
   reference.
 - `examples/tyre_contact.py`: arbitrary-normal adapter example.
-- `examples/tyre_dihedral_contact.py`: structured hex tyre, dihedral compliance
-  reconstruction, and plane-contact solve; preferred tyre-symmetry reference.
+- `examples/tyre_dihedral_contact.py`: structured hex tyre, direct dihedral
+  H-matrix construction, and operator CCG plane-contact solve; preferred
+  tyre-symmetry reference.
 - `examples/generate_tyre_dihedral_mesh.py`: short editable wrapper exposing
   the axial and circumferential division counts.
 - `examples/hmat_benchmark.py`: dense compliance and H-matrix compression
@@ -136,6 +141,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
 - `docs/architecture.md`: formulation, data flow, component boundaries, and
   limitations.
 - `docs/fenicsx_workflow.md`: executable integration lifecycle.
+- `docs/hmatrix_symmetry.md`: direct H-matrix construction from the sampled
+  tyre meridian and operator contact solve.
 - `docs/naming_conventions.md`: naming style.
 - `ScSPD.md`: mathematical note on LCP uniqueness and SPD preservation.
 - `Interpolation_idea.md`: research note, not an implemented contract.

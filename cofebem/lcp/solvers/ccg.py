@@ -14,7 +14,7 @@ def _residual(z: Vector, w: Vector) -> float:
     return float(np.linalg.norm(np.minimum(z, w), ord=np.inf))
 
 
-def _check_symmetric(M: Vector, check_symmetric: bool, name: str) -> None:
+def _check_symmetric(M: object, check_symmetric: bool, name: str) -> None:
     """
     Raise :class:`UnsupportedMatrixError` if ``M`` is not symmetric.
 
@@ -33,7 +33,15 @@ def _check_symmetric(M: Vector, check_symmetric: bool, name: str) -> None:
         If ``check_symmetric`` is True and ``M`` is not (numerically)
         symmetric.
     """
-    if check_symmetric and not np.allclose(M, M.T, atol=1e-12, rtol=1e-12):
+    if not check_symmetric:
+        return
+    if isinstance(M, np.ndarray):
+        symmetric = np.allclose(M, M.T, atol=1e-12, rtol=1e-12)
+    else:
+        # Exhaustive verification would materialise the operator. Require an
+        # explicit guarantee from the implementation instead.
+        symmetric = getattr(M, "symmetric", False) is True
+    if not symmetric:
         raise UnsupportedMatrixError(
             f"{name} requires a symmetric M; the LCP(M, q) <-> "
             "min_{z>=0} 0.5 z.T M z + q.T z equivalence does not hold otherwise."

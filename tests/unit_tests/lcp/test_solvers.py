@@ -108,6 +108,31 @@ class TestSolveDispatcher:
         with pytest.raises(InvalidSolverOptionError):
             solve(problem_spd_2x2, method="psor", omega=3.0)
 
+    def test_operator_dispatches_to_ccg_without_materialisation(self):
+        class Operator:
+            shape = (2, 2)
+            symmetric = True
+
+            def __matmul__(self, vector):
+                return np.array([2.0 * vector[0] + vector[1],
+                                 vector[0] + 2.0 * vector[1]])
+
+        problem = LCP(Operator(), np.array([-1.0, -1.0]))
+        result = solve(problem, method="ccg_v2")
+        assert result.converged
+        np.testing.assert_allclose(result.z, [1.0 / 3.0, 1.0 / 3.0])
+
+    def test_operator_rejected_by_dense_solver(self):
+        class Operator:
+            shape = (2, 2)
+            symmetric = True
+
+            def __matmul__(self, vector):
+                return vector
+
+        with pytest.raises(UnsupportedMatrixError, match="matrix operators"):
+            solve(LCP(Operator(), [-1.0, -1.0]), method="lemke")
+
 
 # ---------------------------------------------------------------------------
 # PSOR

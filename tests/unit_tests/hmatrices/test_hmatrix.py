@@ -32,6 +32,17 @@ def _build_1d_problem(n=128):
     return pts, A
 
 
+class _CountingEntrySource:
+    def __init__(self, matrix):
+        self.matrix = matrix
+        self.shape = matrix.shape
+        self.queries = []
+
+    def get_block(self, rows, columns):
+        self.queries.append((len(rows), len(columns)))
+        return self.matrix[np.ix_(rows, columns)]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -239,6 +250,32 @@ class TestHMatrixConstruction:
 
     def test_stats_has_lr_blocks(self, hmatrix_default):
         assert hmatrix_default.stats()["low_rank"] > 0
+
+    def test_entry_source_uses_only_block_and_aca_cross_queries(self, problem_1d):
+        pts, A = problem_1d
+        source = _CountingEntrySource(A)
+        H = HMatrix.from_entry_source(
+            pts,
+            source,
+            leaf_size=16,
+            tol=1.0e-8,
+            lr_approx="aca_partial",
+            symmetric=True,
+        )
+
+        assert H.stats()["low_rank"] > 0
+        assert source.queries
+        assert (len(pts), len(pts)) not in source.queries
+        assert any(rows == 1 or columns == 1 for rows, columns in source.queries)
+        rng = np.random.default_rng(99)
+        x = rng.standard_normal(len(pts))
+        np.testing.assert_allclose(H @ x, A @ x, rtol=1.0e-5, atol=1.0e-7)
+
+    def test_entry_source_rejects_dense_only_low_rank_method(self, problem_1d):
+        pts, A = problem_1d
+        source = _CountingEntrySource(A)
+        with pytest.raises(ValueError, match="aca_partial"):
+            HMatrix.from_entry_source(pts, source, lr_approx="truncated_svd")
 
 
 # ---------------------------------------------------------------------------

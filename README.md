@@ -77,8 +77,10 @@ been made MPI-safe.
 from `geo_files/geometry_v2.geo`, with configurable axial and circumferential
 divisions. It samples two transverse load directions only on one axial
 reference meridian, reconstructs the global vertical compliance using the
-tyre's discrete dihedral symmetry, applies the internal inflation preload by
-linear superposition, and solves contact against the road plane:
+tyre's discrete dihedral symmetry only when ACA requests an entry, builds a
+symmetric H-matrix directly from those queries, applies the internal inflation
+preload by linear superposition, and solves contact against the road plane
+with hierarchical matvecs:
 
 ```bash
 conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
@@ -87,8 +89,9 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
   --regenerate
 ```
 
-Use `--sampling-only` to stop after constructing and saving `S_c`. Generated
-meshes, compliance arrays, and VTK output are written below
+Use `--sampling-only` to stop after constructing the H-matrix. The saved
+`compliance.npz` contains the sampled reference tensor and H-matrix statistics,
+not a dense global `S_c`. Generated meshes, arrays, and VTK output are written below
 `results/tyre_dihedral/`. For mesh generation alone, edit the two constants in
 `examples/generate_tyre_dihedral_mesh.py` and run that short script.
 
@@ -110,21 +113,23 @@ and [the FEniCSx workflow](docs/fenicsx_workflow.md) for integration details.
 
 ## Current H-matrix status
 
-`cofebem.hmatrices.HMatrix` currently receives a fully assembled dense matrix,
-compresses geometrically admissible blocks, and provides compressed matrix-
-vector products. Thus, it reduces storage and matvec cost after compliance
-sampling, but it does not yet eliminate the dense sampling stage. Its `solve()`
-method also uses a dense LU factorization internally.
+`cofebem.hmatrices.HMatrix` can be built either from a dense array or from a
+`MatrixEntrySource`. In the latter path, inadmissible near-field leaves request
+only their local blocks, while admissible leaves use partial ACA requests for
+selected rows and columns. `LCP` retains such a matrix operator and the CCG
+solvers consume its hierarchical matvec directly. `HMatrix.solve()` itself
+still uses dense LU and is not the contact-solve path.
 
-The legacy CCG implementation has an H-matrix matvec path, but the main
-FEniCSx `Contact.solve()` adapter is still connected to the dense path. Closing
-that integration gap is a principal development direction rather than an
-already supported end-to-end feature.
+The direct entry-source path is exercised end to end by the dihedral tyre
+example. The generic FEniCSx `Contact.solve()` adapter remains on its legacy
+dense compliance path. See [direct symmetry construction](docs/hmatrix_symmetry.md)
+for indexing, complexity, and diagnostics.
 
 ## Known scope
 
 The most reliable dependency-light components are `cofebem.hmatrices` and
-`cofebem.lcp`; their focused suite currently contains 267 passing tests. The
+`cofebem.lcp`; together with the dihedral compliance tests, their focused suite
+currently contains 276 passing tests. The
 FEniCSx adapters are prototypes with important assumptions: 3D vector CG1-like
 spaces, direct PETSc solves, serial-oriented indexing, and use of private
 `LinearProblem` attributes. The architecture documentation records these
