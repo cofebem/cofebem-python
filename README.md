@@ -139,6 +139,17 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
 See [moving-floor tyre contact](docs/floor_motion.md) for the JSON schema,
 rotation convention, outputs, and measured LU-persistence decision.
 
+All mesh, material, floor, roughness, solver, H-matrix, potential-zone,
+compliance, execution, and motion parameters can instead be supplied by one
+structured input:
+
+```bash
+python examples/tyre_dihedral_contact.py -in examples/input.json
+```
+
+See [complete tyre-contact input](docs/tyre_contact_input.md) for the schema,
+relative-path behavior, and CLI override rules.
+
 By default, the example builds and solves only the part of the tyre whose
 inflation-adjusted free gap is within `--warning-distance 0.02` of the road.
 It certifies excluded nodes with a chunked full-target evaluation and expands

@@ -40,6 +40,11 @@ flat plane about `OZ` alone has no geometrical effect.
 
 ## JSON histories
 
+The recommended entry point embeds this motion object in the complete
+`examples/input.json` described in
+[`tyre_contact_input.md`](tyre_contact_input.md). The standalone
+`--motion-file` form remains supported for compatibility.
+
 Pass `--motion-file examples/tyre_floor_motion.json`. The example file is:
 
 ```json
@@ -111,4 +116,3 @@ backend selection.
   histories, timings, and `factorization_count=1`.
 - `contact_result.npz` and the strategy-specific result archive contain the
   final state for compatibility with one-step post-processing.
-

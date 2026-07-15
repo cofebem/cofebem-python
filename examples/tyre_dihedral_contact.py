@@ -10,6 +10,9 @@ constructs a global dense compliance.
 Example
 -------
 conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
+    -in examples/input.json
+
+conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
     --axial-divisions 24 --circumferential-divisions 32 --regenerate
 """
 
@@ -56,6 +59,10 @@ from cofebem.fenics.contact_postprocess import (
     force_based_contact_pressure,
     project_compressive_normal_stress,
     surface_lumped_nodal_areas,
+)
+from cofebem.fenics.tyre_contact_input import (
+    load_tyre_contact_input,
+    validated_argument_defaults,
 )
 from cofebem.hmatrices import HMatrix, IndexedEntrySource
 from cofebem.lcp import (
@@ -215,9 +222,20 @@ def _contact_component_data(V, mesh, contact_facets):
     )
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv=None) -> argparse.Namespace:
     root = Path(__file__).resolve().parents[1]
+    input_parser = argparse.ArgumentParser(add_help=False)
+    input_parser.add_argument("-in", "--input", dest="input_file", type=Path)
+    input_args, _ = input_parser.parse_known_args(argv)
+
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "-in",
+        "--input",
+        dest="input_file",
+        type=Path,
+        help="complete structured JSON input; explicit CLI options override it",
+    )
     parser.add_argument(
         "--template",
         type=Path,
@@ -231,7 +249,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--axial-divisions", type=int, default=24)
     parser.add_argument("--circumferential-divisions", type=int, default=32)
     parser.add_argument("--scale", type=float, default=1.0e-3)
-    parser.add_argument("--regenerate", action="store_true")
+    parser.add_argument(
+        "--regenerate", action=argparse.BooleanOptionalAction, default=False
+    )
     parser.add_argument("--indentation", type=float, default=5.0e-3)
     parser.add_argument(
         "--rotate-floor",
@@ -270,7 +290,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--roughness-k-low", type=float, default=0.03)
     parser.add_argument("--roughness-k-high", type=float, default=0.3)
     parser.add_argument("--roughness-seed", type=int, default=42)
-    parser.add_argument("--roughness-plateau", action="store_true")
+    parser.add_argument(
+        "--roughness-plateau",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     parser.add_argument(
         "--roughness-noise",
         action=argparse.BooleanOptionalAction,
@@ -339,7 +363,8 @@ def _parse_args() -> argparse.Namespace:
         help="allowed negative clearance outside the potential zone",
     )
     parser.add_argument("--factor-solver-type", default=None)
-    parser.add_argument(
+    compliance_load_group = parser.add_mutually_exclusive_group()
+    compliance_load_group.add_argument(
         "--load-compliance",
         type=Path,
         metavar="PATH",
@@ -348,9 +373,40 @@ def _parse_args() -> argparse.Namespace:
             "and skip the compliance sampling solves"
         ),
     )
-    parser.add_argument("--sampling-only", action="store_true")
-    parser.add_argument("--no-progress", action="store_true")
-    return parser.parse_args()
+    compliance_load_group.add_argument(
+        "--no-load-compliance",
+        dest="load_compliance",
+        action="store_const",
+        const=None,
+        help="ignore a compliance archive configured in the JSON input",
+    )
+    parser.add_argument(
+        "--sampling-only", action=argparse.BooleanOptionalAction, default=False
+    )
+    progress_group = parser.add_mutually_exclusive_group()
+    progress_group.add_argument(
+        "--no-progress", dest="no_progress", action="store_true"
+    )
+    progress_group.add_argument(
+        "--progress", dest="no_progress", action="store_false"
+    )
+    parser.set_defaults(no_progress=False)
+
+    input_data = None
+    if input_args.input_file is not None:
+        try:
+            input_data = load_tyre_contact_input(input_args.input_file)
+            parser.set_defaults(
+                **validated_argument_defaults(
+                    parser, input_data.argument_defaults
+                )
+            )
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+    args = parser.parse_args(argv)
+    args.embedded_motion = None if input_data is None else input_data.motion
+    args.input_file = None if input_data is None else input_data.path
+    return args
 
 
 def _run_motion_history(
@@ -747,6 +803,7 @@ def _run_motion_history(
                 "pressure_postprocess_seconds": step_pressure_seconds,
                 "factorization_count": 1,
                 "reference_vertical_shift": reference_vertical_shift,
+                "input_file": str(args.input_file or ""),
             }
             np.savez(step_dir / f"contact_result_{step:05d}.npz", **payload)
             last_payload = payload
@@ -782,6 +839,7 @@ def _run_motion_history(
             "compliance_strategy": args.compliance_strategy,
             "contact_solver": args.contact_solver,
             "floor_pivot": floor_pivot,
+            "input_file": str(args.input_file or ""),
         }
     )
     np.savez(output_dir / "motion_history.npz", **history_payload)
@@ -812,17 +870,22 @@ def main() -> None:
         translation_x=args.floor_translation_x,
         translation_y=args.floor_translation_y,
     )
-    motion = (
-        FloorMotionSchedule.from_json(args.motion_file, defaults=static_motion)
-        if args.motion_file is not None
-        else FloorMotionSchedule.constant(
+    if args.motion_file is not None:
+        motion = FloorMotionSchedule.from_json(
+            args.motion_file, defaults=static_motion
+        )
+    elif args.embedded_motion is not None:
+        motion = FloorMotionSchedule.from_mapping(
+            args.embedded_motion, defaults=static_motion
+        )
+    else:
+        motion = FloorMotionSchedule.constant(
             indentation=args.indentation,
             rotation_y_deg=args.rotate_floor,
             rotation_z_deg=args.torsion_floor,
             translation_x=args.floor_translation_x,
             translation_y=args.floor_translation_y,
         )
-    )
     if not np.isfinite(args.floor_level):
         raise ValueError("floor-level must be finite")
     if args.floor_grid_size < 2:
@@ -1059,6 +1122,7 @@ def main() -> None:
         roughness_plateau=args.roughness_plateau,
         roughness_noise=args.roughness_noise,
         floor_pivot=floor_pivot,
+        input_file=str(args.input_file or ""),
         **motion.as_arrays(),
     )
     floor_build_seconds = perf_counter() - start
@@ -1643,6 +1707,7 @@ def main() -> None:
         "fe_linear_solve_seconds": fe_totals["solve_seconds"],
         "factorization_count": 1,
         "reference_vertical_shift": reference_vertical_shift,
+        "input_file": str(args.input_file or ""),
     }
     np.savez(output_dir / "contact_result.npz", **result_payload)
     strategy_result_path = (

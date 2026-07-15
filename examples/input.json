@@ -1,0 +1,69 @@
+{
+  "mesh": {
+    "template": "../geo_files/geometry_v2.geo",
+    "file": "../results/tyre_dihedral/tyre_dihedral.msh",
+    "axial_divisions": 200,
+    "circumferential_divisions": 400,
+    "scale": 0.001,
+    "regenerate": false
+  },
+  "material": {
+    "young_modulus": 250000000.0,
+    "poisson_ratio": 0.48,
+    "inflation_pressure": 150000.0
+  },
+  "floor": {
+    "kind": "rough",
+    "level": 0.0,
+    "grid_size": 256,
+    "margin": 0.02
+  },
+  "roughness": {
+    "rms": 0.0002,
+    "hurst": 0.8,
+    "k_low": 0.03,
+    "k_high": 0.3,
+    "seed": 42,
+    "plateau": false,
+    "noise": true
+  },
+  "motion": {
+    "time": [0, 1, 2, 3, 4],
+    "interval_steps": [10, 10, 10, 10],
+    "indentation": [0.0, 0.01, 0.01, 0.01, 0.01],
+    "floor_rotation_y_deg": [0.0, 0.0, 0.0, 3.0, 3.0],
+    "floor_rotation_z_deg": [0.0, 0.0, 3.0, 0.0, 0.0],
+    "floor_translation_x": [0.0, 0.0, 0.01, 0.01, 0.01],
+    "floor_translation_y": [0.0, 0.0, 0.0, 0.01, 0.01]
+  },
+  "compliance": {
+    "strategy": "hmatrix",
+    "load": "../results/tyre_dihedral/compliance.npz",
+    "factor_solver_type": null
+  },
+  "solver": {
+    "contact_method": "ppcg",
+    "max_iterations": 10000,
+    "tolerance": 1e-10,
+    "pcg_preconditioner": "spectral",
+    "pcg_zero_mode_factor": 1.0,
+    "pcg_beta_method": "pr_plus"
+  },
+  "hmatrix": {
+    "leaf_size": 32,
+    "eta": 1.0,
+    "tolerance": 1e-7,
+    "max_rank": 50,
+    "split": "pca"
+  },
+  "potential_contact": {
+    "warning_distance": 0.02,
+    "halo": 1,
+    "max_rounds": 5,
+    "verification_tolerance": 1e-7
+  },
+  "execution": {
+    "sampling_only": false,
+    "show_progress": true
+  }
+}

@@ -97,6 +97,8 @@ self-affine regular floors plus VTU export.
 `floor_motion.py` validates and interpolates JSON motion histories, applies
 rigid `Rz @ Ry` transformations, intersects vertical rays with transformed
 rough height fields, and writes moving-floor ParaView collections.
+`fenics/tyre_contact_input.py` validates the complete structured tyre JSON,
+maps its sections to the example interface, and resolves case-relative paths.
 Some files remain experimental: `cylinder_indenter.py` performs file I/O and a
 full comparison at import time and should not be treated as a library module.
 
@@ -164,6 +166,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   pressure recovery, CLI, and output fields.
 - `docs/floor_motion.md`: floor kinematics, JSON load histories, factorization
   reuse, moving outputs, and the LU-persistence benchmark.
+- `docs/tyre_contact_input.md`: complete case schema, path resolution, and CLI
+  override behavior for `examples/input.json`.
 - `docs/naming_conventions.md`: naming style.
 - `ScSPD.md`: mathematical note on LCP uniqueness and SPD preservation.
 - `Interpolation_idea.md`: research note, not an implemented contract.

@@ -119,10 +119,58 @@ class FloorMotionSchedule:
         path = Path(path).expanduser()
         with path.open(encoding="utf-8") as stream:
             payload = json.load(stream)
+        return cls.from_mapping(payload, defaults=defaults)
+
+    @classmethod
+    def from_mapping(
+        cls,
+        payload: dict[str, object],
+        *,
+        defaults: FloorMotionState | None = None,
+    ) -> "FloorMotionSchedule":
+        """Expand an embedded motion object by linear interpolation."""
         if not isinstance(payload, dict):
-            raise ValueError("motion JSON root must be an object")
+            raise ValueError("motion input must be an object")
+        motion_fields = {
+            "indentation",
+            "floor_rotation_y_deg",
+            "floor_rotation_z_deg",
+            "floor_translation_x",
+            "floor_translation_y",
+        }
+        unknown = set(payload) - motion_fields - {"time", "interval_steps"}
+        if unknown:
+            raise ValueError(
+                "Unknown motion field(s): " + ", ".join(sorted(unknown))
+            )
+        default = defaults or FloorMotionState(time=0.0)
         if "time" not in payload:
-            raise ValueError("motion JSON requires a 'time' array")
+            if "interval_steps" in payload:
+                raise ValueError("motion interval_steps requires a time array")
+
+            def scalar(name: str, fallback: float) -> float:
+                value = np.asarray(payload.get(name, fallback), dtype=float)
+                if value.ndim != 0 or not np.isfinite(value):
+                    raise ValueError(
+                        f"static motion field {name} must be a finite scalar"
+                    )
+                return float(value)
+
+            return cls.constant(
+                indentation=scalar("indentation", default.indentation),
+                rotation_y_deg=scalar(
+                    "floor_rotation_y_deg", default.rotation_y_deg
+                ),
+                rotation_z_deg=scalar(
+                    "floor_rotation_z_deg", default.rotation_z_deg
+                ),
+                translation_x=scalar(
+                    "floor_translation_x", default.translation_x
+                ),
+                translation_y=scalar(
+                    "floor_translation_y", default.translation_y
+                ),
+            )
         key_times = _numeric_vector(payload["time"], "time")
         if key_times.size < 2:
             raise ValueError("motion JSON needs at least two key times")
@@ -142,7 +190,6 @@ class FloorMotionSchedule:
         if np.any(interval_steps <= 0):
             raise ValueError("interval_steps entries must be positive")
 
-        default = defaults or FloorMotionState(time=float(key_times[0]))
         fields = {
             "indentation": default.indentation,
             "floor_rotation_y_deg": default.rotation_y_deg,
