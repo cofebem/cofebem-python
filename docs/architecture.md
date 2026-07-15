@@ -141,6 +141,20 @@ fixed road-normal direction and avoiding global dense reconstruction. The inflat
 to the undeformed road gap before solving the LCP, and inflation and contact
 loads are superposed in the final elastic solve.
 
+The tyre stiffness fixes all displacement components only on the two mirrored
+3 mm disk-edge strips generated from template curves 8 and 153. The adjacent
+5 mm bead strips are free. Compliance archives carry
+`boundary_condition_id="disk_edge_short_curves_v1"`; changing or broadening
+this constraint invalidates every sampled compliance and factorized operator.
+
+The rigid road is a regular height field. Flat and rfgen self-affine floors
+share the vertical projection `g0 = z_tyre - h_floor(x, y)`, after which the
+inflation displacement is added. This preserves the global-z compliance
+formulation; local rough-floor normals are output for visualization but do not
+rotate the contact operator. Post-processing reports both consistent nodal
+force divided by associated surface area and the projected contact-increment
+normal stress `-n.sigma(u_contact).n`. See `docs/rough_floor_contact.md`.
+
 The same module provides `FactorizedComplianceOperator`. Given contact force
 DOFs and a reusable PETSc `PREONLY`+`LU` solver, it injects a candidate-zone
 force vector, solves the full constrained FE system, and extracts the requested

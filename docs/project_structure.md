@@ -73,6 +73,8 @@ The matching unit tests are under `tests/unit_tests/lcp`.
 - `dihedral_compliance.py`: reference-meridian y/z sampling with one reusable
   PETSc LU factorization, an entry source that rotates only requested global-z
   compliance entries, and an exact factorized-FE compliance operator.
+- `contact_postprocess.py`: consistent contact nodal areas and surface
+  projection of force-based and stress-based pressure fields.
 
 These files rely on DOLFINx private `LinearProblem` attributes and require
 focused testing against the active Conda environment.
@@ -90,6 +92,8 @@ migrate adapters toward `cofebem/lcp` with compatibility tests.
 ### `cofebem/bodies`
 
 Sphere, cone, and plane modules provide gap functions used by the adapters.
+`regular_floor.py` provides bilinear projection onto flat and rfgen-generated
+self-affine regular floors plus VTU export.
 Some files remain experimental: `cylinder_indenter.py` performs file I/O and a
 full comparison at import time and should not be treated as a library module.
 
@@ -125,7 +129,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
 - `examples/tyre_contact.py`: arbitrary-normal adapter example.
 - `examples/tyre_dihedral_contact.py`: structured hex tyre, direct dihedral
   H-matrix or flexibility-matrix-free compliance action, and spectrally
-  preconditioned operator PPCG solve; preferred tyre-symmetry reference.
+  preconditioned operator PPCG solve; preferred tyre-symmetry reference. It
+  constrains only the two shortest mirrored disk-edge strips.
 - `examples/compare_tyre_compliance_strategies.py`: compare saved H-matrix and
   factorized-FE runs made with the same tyre configuration.
 - `examples/generate_tyre_dihedral_mesh.py`: short editable wrapper exposing
@@ -152,6 +157,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   full-surface certification, and candidate-zone expansion for tyre contact.
 - `docs/flexibility_matrix_free.md`: exact factorized-FE compliance action and
   the H-matrix versus matrix-free tyre benchmark.
+- `docs/rough_floor_contact.md`: rfgen floor construction, projected gap,
+  pressure recovery, CLI, and output fields.
 - `docs/naming_conventions.md`: naming style.
 - `ScSPD.md`: mathematical note on LCP uniqueness and SPD preservation.
 - `Interpolation_idea.md`: research note, not an implemented contract.

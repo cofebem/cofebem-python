@@ -20,6 +20,7 @@ MATERIAL_INNER = 1004
 CONTACT_TAG = 201
 FIXED_TAG = 202
 INNER_SURFACE_TAG = 203
+BOUNDARY_CONDITION_ID = "disk_edge_short_curves_v1"
 
 _SEED_SURFACES = (17, 19, 21, 23, 24, 29, 144, 149)
 _SURFACE_CORNERS = {
@@ -52,7 +53,10 @@ _THICKNESS_CURVES = (1, 2, 6, 7, 8, 9, 27, 33, 147, 153)
 
 # Boundary curves of the complete mirrored cross-section.
 _OUTER_CURVES = (3, 10, 13, 146, 151, 152)
-_BEAD_CURVES = (8, 9, 33, 153)
+# Only the two shortest (3 mm) bead-boundary curves represent the outer edge
+# of the rigid wheel disk. Curves 9 and 33 are the adjacent 5 mm free bead
+# surface and must not receive Dirichlet constraints.
+_DISK_EDGE_CURVES = (8, 153)
 _INNER_CURVES = (5, 12, 15, 28, 35, 34)
 
 
@@ -166,8 +170,8 @@ def _mesh_cross_section(template: Path, axial_divisions: int):
         outer_edges, _ = _elements_on_entities(
             gmsh, 1, _OUTER_CURVES, element_type=1
         )
-        bead_edges, _ = _elements_on_entities(
-            gmsh, 1, _BEAD_CURVES, element_type=1
+        disk_edge_edges, _ = _elements_on_entities(
+            gmsh, 1, _DISK_EDGE_CURVES, element_type=1
         )
         inner_edges, _ = _elements_on_entities(
             gmsh, 1, _INNER_CURVES, element_type=1
@@ -175,7 +179,12 @@ def _mesh_cross_section(template: Path, axial_divisions: int):
 
         used_tags = np.unique(
             np.concatenate(
-                [quads.ravel(), outer_edges.ravel(), bead_edges.ravel(), inner_edges.ravel()]
+                [
+                    quads.ravel(),
+                    outer_edges.ravel(),
+                    disk_edge_edges.ravel(),
+                    inner_edges.ravel(),
+                ]
             )
         )
         all_tags, all_coords, _ = gmsh.model.mesh.getNodes()
@@ -195,7 +204,7 @@ def _mesh_cross_section(template: Path, axial_divisions: int):
             remap(quads),
             material,
             remap(outer_edges),
-            remap(bead_edges),
+            remap(disk_edge_edges),
             remap(inner_edges),
             (crown, shoulder, sidewall),
         )
@@ -235,7 +244,8 @@ def generate_tyre_mesh(
 
     ``axial_divisions`` is the total number of elements along the outer
     cross-section from one bead to the other. ``circumferential_divisions`` is
-    the number of equal sectors around the x axis.
+    the number of equal sectors around the x axis. ``FIXED_TAG`` marks only
+    the two mirrored shortest disk-edge curves (template curves 8 and 153).
     """
     if circumferential_divisions < 4 or circumferential_divisions % 2:
         raise ValueError(
@@ -256,7 +266,7 @@ def generate_tyre_mesh(
         cross_quads,
         cross_material,
         outer_edges,
-        bead_edges,
+        disk_edge_edges,
         inner_edges,
         axial_split,
     ) = _mesh_cross_section(template, axial_divisions)
@@ -298,7 +308,7 @@ def generate_tyre_mesh(
     facet_tags: list[int] = []
     for edges, tag in (
         (outer_edges, CONTACT_TAG),
-        (bead_edges, FIXED_TAG),
+        (disk_edge_edges, FIXED_TAG),
         (inner_edges, INNER_SURFACE_TAG),
     ):
         for sector in range(n_theta):
@@ -333,7 +343,7 @@ def generate_tyre_mesh(
             "rubber_outer": np.array([MATERIAL_OUTER, 3]),
             "rubber_inner": np.array([MATERIAL_INNER, 3]),
             "road_contact": np.array([CONTACT_TAG, 2]),
-            "bead_clamp": np.array([FIXED_TAG, 2]),
+            "disk_edge_clamp": np.array([FIXED_TAG, 2]),
             "inner_surface": np.array([INNER_SURFACE_TAG, 2]),
         },
     )

@@ -32,6 +32,7 @@ scipy = ">=1.8"
 matplotlib = "==3.9.2"
 numba = ">=0.55"
 tqdm = "==4.67.0"
+rfgen = ">=0.1.8"
 
 [project.optional-dependencies]
 dev = [

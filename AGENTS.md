@@ -76,13 +76,18 @@ scope of the task.
 - `cofebem/fenics/dihedral_compliance.py`: tyre-sector ordering,
   reference-meridian PETSc LU sampling, road-normal reconstruction, and the
   factorized-FE compliance operator.
+- `cofebem/fenics/contact_postprocess.py`: consistent contact nodal areas and
+  force-based/stress-based pressure fields.
 - `cofebem/contact/Sc.py` and `Sc_normal.py`: compliance sampling from PETSc.
 - `cofebem/contact/lcp_solvers/`: legacy solver API used by the FEniCSx contact
   adapters. Preserve compatibility until the adapters migrate to
   `cofebem.lcp`.
 - `cofebem/bodies/`: rigid gap models used by examples.
+- `cofebem/bodies/regular_floor.py`: regular flat/rfgen rough floor generation,
+  vertical projection, and floor-mesh output.
 - `cofebem/mesh/tyre_dihedral_hex.py`: tagged D_n-symmetric hex mesh generator
-  for `geo_files/geometry_v2.geo`.
+  for `geo_files/geometry_v2.geo`; its fixed tag is limited to the two mirrored
+  3 mm disk-edge curves, not the adjacent bead surface.
 - `cofebem/pipeline_fenicsx_minimal.py`: smallest end-to-end example.
 
 Treat most top-level `cofebem/Sc_*.py`, large files under `cofebem/bem/`, and
@@ -104,6 +109,10 @@ When changing compliance construction or contact solving, preserve and test:
   complementarity, not only an algorithm-specific stopping metric.
 - Units: `S_c` maps nodal force to displacement. The boundary mass solve maps
   nodal force to a traction field; do not mix force and pressure silently.
+- Tyre pressure output: `contact_pressure_force_based` is nodal force divided
+  by consistent associated area; `contact_pressure_stress` is the signed
+  contact-increment recovery `-n.sigma(u_contact).n`. Do not silently equate
+  the two or include inflation stress in the latter.
 - H-matrix ordering: the coordinate row order must exactly match the matrix
   order. `symmetric=True` is valid only when the source operator is symmetric.
 - Approximation safety: report matvec error and storage, and check whether an

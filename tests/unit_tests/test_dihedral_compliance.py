@@ -276,3 +276,35 @@ def test_load_legacy_compliance_warns_about_unverified_material(tmp_path):
         )
 
     np.testing.assert_array_equal(loaded, samples)
+
+
+def test_load_compliance_rejects_missing_or_changed_boundary_condition(tmp_path):
+    samples = np.ones((2, 1, 2, 2, 1))
+    points = np.arange(6, dtype=float).reshape(2, 3)
+    legacy_path = tmp_path / "legacy_boundary.npz"
+    _write_compliance_archive(legacy_path, samples, points)
+
+    with pytest.raises(ValueError, match="does not identify its boundary"):
+        load_dihedral_compliance_archive(
+            legacy_path,
+            points,
+            n_axial=1,
+            n_sectors=2,
+            boundary_condition_id="disk_edge_short_curves_v1",
+        )
+
+    current_path = tmp_path / "current_boundary.npz"
+    _write_compliance_archive(
+        current_path,
+        samples,
+        points,
+        boundary_condition_id="disk_edge_short_curves_v1",
+    )
+    with pytest.raises(ValueError, match="boundary_condition_id"):
+        load_dihedral_compliance_archive(
+            current_path,
+            points,
+            n_axial=1,
+            n_sectors=2,
+            boundary_condition_id="another_constraint",
+        )

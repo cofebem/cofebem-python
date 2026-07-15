@@ -302,6 +302,7 @@ def load_dihedral_compliance_archive(
     n_sectors: int,
     young_modulus: float | None = None,
     poisson_ratio: float | None = None,
+    boundary_condition_id: str | None = None,
 ) -> np.ndarray:
     """Load and validate reference-meridian samples from ``compliance.npz``.
 
@@ -334,6 +335,7 @@ def load_dihedral_compliance_archive(
                 "circumferential_divisions",
                 "young_modulus",
                 "poisson_ratio",
+                "boundary_condition_id",
             ):
                 if name in archive.files:
                     value = np.asarray(archive[name])
@@ -418,6 +420,20 @@ def load_dihedral_compliance_archive(
             UserWarning,
             stacklevel=2,
         )
+
+    if boundary_condition_id is not None:
+        saved_boundary_condition = metadata.get("boundary_condition_id")
+        if saved_boundary_condition is None:
+            raise ValueError(
+                "Loaded compliance archive does not identify its boundary "
+                "condition and cannot be reused safely"
+            )
+        if str(saved_boundary_condition) != boundary_condition_id:
+            raise ValueError(
+                "Loaded compliance boundary_condition_id="
+                f"{saved_boundary_condition!r} does not match the current "
+                f"value {boundary_condition_id!r}"
+            )
 
     return samples
 

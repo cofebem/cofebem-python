@@ -163,8 +163,11 @@ positive definiteness before using the approximation in CCG/PPCG. The main
 
 `examples/tyre_dihedral_contact.py` is the reference for a tyre revolved about
 the x axis. The mesh generator creates equal circumferential sectors from the
-blocked `geometry_v2.geo` cross-section and tags the outer carcass, bead clamp,
-and inner surface.
+blocked `geometry_v2.geo` cross-section and tags the outer carcass, disk-edge
+clamp, and inner surface. The clamp contains only template curves 8 and 153:
+the two mirrored 3 mm boundary strips at the rigid disk edge. Curves 9 and 33,
+the adjacent 5 mm bead strips, remain unconstrained. The example validates the
+fixed facet/vertex counts and cylindrical geometry before assembly.
 
 A fixed global-z road force rotates into both y and z components when mapped
 to the zero-angle tyre meridian. The example therefore performs two PETSc LU
@@ -200,7 +203,9 @@ and performs the final elastic solve. The loader checks sector and axial sizes,
 translation-independent surface geometry/order, and elastic constants when the
 archive provides them. This permits a changed indentation or inflation pressure
 without re-sampling. Legacy archives without material metadata are accepted
-with a warning because their elastic compatibility cannot be verified.
+with a warning because their elastic compatibility cannot be verified. A
+boundary-condition identifier is mandatory when loading through the tyre
+example, so an archive sampled with the former broad bead clamp is rejected.
 
 ### Flexibility-matrix-free strategy
 
@@ -232,6 +237,22 @@ python examples/compare_tyre_compliance_strategies.py
 
 The formulation and a 100-by-200 benchmark are documented in
 [`flexibility_matrix_free.md`](flexibility_matrix_free.md).
+
+### Flat and rough floors
+
+`--floor flat` uses a regular constant-height grid. `--floor rough` calls
+rfgen to generate a seeded periodic self-affine grid, normalizes its RMS, and
+places its highest asperity at `--floor-level`. Every tyre contact node is
+projected vertically and its bilinearly interpolated floor height defines
+`g0`. Both H-matrix and factorized-FE strategies consume the resulting gap
+without changing their compliance construction.
+
+The tyre output includes `contact_pressure_stress = -n.sigma(u_contact).n`
+after surface L2 projection and `contact_pressure_force_based = force/area`.
+The latter uses consistent CG1 nodal surface areas and exactly preserves the
+nodal-force resultant. The regular floor is written separately as VTU and NPZ.
+See [`rough_floor_contact.md`](rough_floor_contact.md) for commands,
+parameters, assumptions, and stress-recovery caveats.
 
 The H-matrix implementation reports sector alignment, reflection parity, sampled
 reciprocity, H-matrix storage, and entry-query counts. Symmetric H-matrix

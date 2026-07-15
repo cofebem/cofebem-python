@@ -91,6 +91,11 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
   --regenerate
 ```
 
+The Dirichlet condition fixes all displacement components only on the two
+mirrored shortest (3 mm) disk-edge strips. The adjacent 5 mm bead strips are
+free. Existing default meshes with the earlier broad bead clamp are detected
+and regenerated automatically.
+
 Use `--pcg-preconditioner none` to measure the unpreconditioned projected
 method, or `--contact-solver ccg_v2` for the previous face-by-face baseline.
 Use the matrix-free strategy without sampling or storing a compliance:
@@ -103,6 +108,22 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
 
 See the [flexibility-matrix-free study](docs/flexibility_matrix_free.md) for
 the formulation, timing comparison, storage trade-off, and comparison utility.
+
+The road can be a regular flat floor or a periodic self-affine rough floor
+generated with `rfgen`. Tyre nodes are vertically projected onto its bilinear
+height field to form the initial gap. The result contains both
+`contact_pressure_stress` and `contact_pressure_force_based`, while a separate
+VTU stores the regular floor geometry:
+
+```bash
+conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
+  --axial-divisions 24 --circumferential-divisions 32 \
+  --floor rough --floor-grid-size 128 --roughness-rms 2e-4
+```
+
+See [rough floor contact](docs/rough_floor_contact.md) for the rfgen controls,
+gap convention, pressure definitions, outputs, and current vertical-contact
+scope.
 
 By default, the example builds and solves only the part of the tyre whose
 inflation-adjusted free gap is within `--warning-distance 0.02` of the road.
@@ -170,7 +191,7 @@ the sector-spectral preconditioner.
 
 The most reliable dependency-light components are `cofebem.hmatrices` and
 `cofebem.lcp`; together with the dihedral compliance tests, their focused suite
-currently contains 311 passing tests. The
+currently contains 320 passing tests. The
 FEniCSx adapters are prototypes with important assumptions: 3D vector CG1-like
 spaces, direct PETSc solves, serial-oriented indexing, and use of private
 `LinearProblem` attributes. The architecture documentation records these

@@ -52,6 +52,11 @@ from cofebem.fenics.dihedral_compliance import (
     restricted_source_clearance,
     sample_reference_transverse_compliance,
 )
+from cofebem.fenics.contact_postprocess import (
+    force_based_contact_pressure,
+    project_compressive_normal_stress,
+    surface_lumped_nodal_areas,
+)
 from cofebem.hmatrices import HMatrix, IndexedEntrySource
 from cofebem.lcp import (
     LCP,
@@ -60,11 +65,13 @@ from cofebem.lcp import (
     solve,
 )
 from cofebem.mesh.tyre_dihedral_hex import (
+    BOUNDARY_CONDITION_ID,
     CONTACT_TAG,
     FIXED_TAG,
     INNER_SURFACE_TAG,
     generate_tyre_mesh,
 )
+from cofebem.bodies.regular_floor import RegularFloor, square_floor_bounds
 
 
 def _surface_vertices(mesh, facets: np.ndarray) -> np.ndarray:
@@ -74,6 +81,38 @@ def _surface_vertices(mesh, facets: np.ndarray) -> np.ndarray:
     return np.unique(
         np.concatenate([facet_to_vertex.links(int(facet)) for facet in facets])
     )
+
+
+def _validate_disk_edge_facets(
+    mesh, facets: np.ndarray, n_sectors: int
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Validate the two mirrored, one-element-wide disk-edge strips."""
+    expected_facets = 2 * n_sectors
+    if facets.size != expected_facets:
+        raise ValueError(
+            "Disk-edge tag must contain exactly the two shortest boundary "
+            f"curves ({expected_facets} facets), found {facets.size}"
+        )
+    vertices = _surface_vertices(mesh, facets)
+    expected_vertices = 4 * n_sectors
+    if vertices.size != expected_vertices:
+        raise ValueError(
+            "Disk-edge tag must span four circumferential node rings "
+            f"({expected_vertices} vertices), found {vertices.size}"
+        )
+
+    points = mesh.geometry.x[vertices]
+    length_scale = max(float(np.ptp(mesh.geometry.x, axis=0).max()), 1.0e-15)
+    x_levels = np.unique(np.round(points[:, 0] / length_scale, decimals=10))
+    absolute_x_levels = np.unique(np.round(np.abs(x_levels), decimals=10))
+    if x_levels.size != 4 or absolute_x_levels.size != 2:
+        raise ValueError(
+            "Disk-edge tag must contain two axial rings on each mirrored edge"
+        )
+    radius = np.hypot(points[:, 1], points[:, 2])
+    if float(np.ptp(radius)) > 1.0e-10 * length_scale:
+        raise ValueError("Disk-edge vertices do not lie on one cylindrical radius")
+    return vertices, x_levels * length_scale, float(radius.mean())
 
 
 def _match_component_dofs(
@@ -92,9 +131,18 @@ def _match_component_dofs(
         raise RuntimeError("Could not align collapsed y/z component DOFs") from exc
 
 
+def _contact_scalar_field(space, dofs, values, name):
+    field = fem.Function(space)
+    field.name = name
+    field.x.array[:] = 0.0
+    field.x.array[np.asarray(dofs, dtype=np.int32)] = np.asarray(values)
+    field.x.scatter_forward()
+    return field
+
+
 def _assemble_elasticity(
     mesh,
-    fixed_facets,
+    disk_edge_facets,
     facet_tags,
     young_modulus,
     poisson_ratio,
@@ -118,7 +166,7 @@ def _assemble_elasticity(
         return lmbda * tr(epsilon(w)) * Identity(tdim) + 2.0 * mu * epsilon(w)
 
     a = inner(sigma(u), epsilon(v)) * dx
-    fixed_dofs = fem.locate_dofs_topological(V, fdim, fixed_facets)
+    fixed_dofs = fem.locate_dofs_topological(V, fdim, disk_edge_facets)
     bc = fem.dirichletbc(
         np.zeros(tdim, dtype=PETSc.ScalarType), fixed_dofs, V
     )
@@ -179,6 +227,27 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--scale", type=float, default=1.0e-3)
     parser.add_argument("--regenerate", action="store_true")
     parser.add_argument("--indentation", type=float, default=5.0e-3)
+    parser.add_argument(
+        "--floor",
+        dest="floor_kind",
+        choices=("flat", "rough"),
+        default="flat",
+        help="regular rigid floor type (vertical-contact height field)",
+    )
+    parser.add_argument("--floor-level", type=float, default=0.0)
+    parser.add_argument("--floor-grid-size", type=int, default=256)
+    parser.add_argument("--floor-margin", type=float, default=2.0e-2)
+    parser.add_argument("--roughness-rms", type=float, default=2.0e-4)
+    parser.add_argument("--roughness-hurst", type=float, default=0.8)
+    parser.add_argument("--roughness-k-low", type=float, default=0.03)
+    parser.add_argument("--roughness-k-high", type=float, default=0.3)
+    parser.add_argument("--roughness-seed", type=int, default=42)
+    parser.add_argument("--roughness-plateau", action="store_true")
+    parser.add_argument(
+        "--roughness-noise",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--young-modulus", type=float, default=2.5e8)
     parser.add_argument("--poisson-ratio", type=float, default=0.48)
     parser.add_argument("--inflation-pressure", type=float, default=1.5e5)
@@ -265,6 +334,21 @@ def main() -> None:
         raise ValueError("poisson-ratio must lie in [0, 0.5)")
     if args.indentation < 0.0:
         raise ValueError("indentation must be non-negative")
+    if not np.isfinite(args.floor_level):
+        raise ValueError("floor-level must be finite")
+    if args.floor_grid_size < 2:
+        raise ValueError("floor-grid-size must be at least 2")
+    if args.floor_margin < 0.0:
+        raise ValueError("floor-margin must be non-negative")
+    if args.floor_kind == "rough":
+        if args.roughness_rms <= 0.0:
+            raise ValueError("roughness-rms must be positive")
+        if not 0.0 <= args.roughness_hurst <= 1.0:
+            raise ValueError("roughness-hurst must lie in [0, 1]")
+        if not 0.0 < args.roughness_k_low < args.roughness_k_high <= 0.5:
+            raise ValueError(
+                "roughness cutoffs must satisfy 0 < k-low < k-high <= 0.5"
+            )
     if args.inflation_pressure < 0.0:
         raise ValueError("inflation-pressure must be non-negative")
     if args.h_leaf_size <= 0 or args.h_max_rank <= 0:
@@ -325,7 +409,9 @@ def main() -> None:
         contact_facets = facet_tags.find(CONTACT_TAG)
         fixed_facets = facet_tags.find(FIXED_TAG)
         if contact_facets.size == 0 or fixed_facets.size == 0:
-            raise RuntimeError("Generated mesh is missing contact or bead facet tags")
+            raise RuntimeError(
+                "Generated mesh is missing contact or disk-edge facet tags"
+            )
 
         contact_vertices = _surface_vertices(mesh, contact_facets)
         actual_sectors, actual_axial_nodes = infer_regular_sector_shape(
@@ -336,14 +422,23 @@ def main() -> None:
             actual_sectors == args.circumferential_divisions
             and actual_axial_divisions == args.axial_divisions
         )
-        if density_matches:
+        boundary_matches = fixed_facets.size == 2 * actual_sectors
+        if density_matches and boundary_matches:
             break
-        mismatch = (
-            f"existing mesh density is axial={actual_axial_divisions}, "
-            f"circumferential={actual_sectors}; requested axial="
-            f"{args.axial_divisions}, circumferential="
-            f"{args.circumferential_divisions}"
-        )
+        mismatch_parts = []
+        if not density_matches:
+            mismatch_parts.append(
+                f"existing mesh density is axial={actual_axial_divisions}, "
+                f"circumferential={actual_sectors}; requested axial="
+                f"{args.axial_divisions}, circumferential="
+                f"{args.circumferential_divisions}"
+            )
+        if not boundary_matches:
+            mismatch_parts.append(
+                f"disk-edge tag contains {fixed_facets.size} facets; expected "
+                f"{2 * actual_sectors} for {BOUNDARY_CONDITION_ID}"
+            )
+        mismatch = "; ".join(mismatch_parts)
         if generate_mesh:
             raise RuntimeError(
                 f"Generated tyre mesh has an unexpected density: {mismatch}"
@@ -355,8 +450,23 @@ def main() -> None:
         print(f"{mismatch}; regenerating the default tyre mesh")
         generate_mesh = True
 
-    # Put the undeformed outer tread at a prescribed penetration into z=0.
-    vertical_shift = -float(mesh.geometry.x[contact_vertices, 2].min()) - args.indentation
+    fixed_vertices, fixed_x_levels, fixed_radius = _validate_disk_edge_facets(
+        mesh, fixed_facets, actual_sectors
+    )
+    print(
+        f"disk-edge constraint={fixed_facets.size} facets, "
+        f"{fixed_vertices.size} vertices, axial rings="
+        f"{np.array2string(fixed_x_levels, precision=6)}, "
+        f"radius={fixed_radius:.6g}"
+    )
+
+    # Put the undeformed outer tread at the requested penetration relative to
+    # the flat floor or the highest-asperity datum of a rough floor.
+    vertical_shift = (
+        args.floor_level
+        - float(mesh.geometry.x[contact_vertices, 2].min())
+        - args.indentation
+    )
     mesh.geometry.x[:, 2] += vertical_shift
 
     V, A, pressure_rhs = _assemble_elasticity(
@@ -380,6 +490,61 @@ def main() -> None:
     )
 
     full_points = ordering.points.reshape(-1, 3)
+    output_dir = mesh_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    start = perf_counter()
+    x_bounds, y_bounds = square_floor_bounds(
+        full_points[:, :2], margin=args.floor_margin
+    )
+    if args.floor_kind == "flat":
+        floor = RegularFloor.flat(
+            x_bounds,
+            y_bounds,
+            cells=args.floor_grid_size,
+            level=args.floor_level,
+        )
+    else:
+        floor = RegularFloor.self_affine(
+            x_bounds,
+            y_bounds,
+            cells=args.floor_grid_size,
+            level=args.floor_level,
+            rms=args.roughness_rms,
+            hurst=args.roughness_hurst,
+            k_low=args.roughness_k_low,
+            k_high=args.roughness_k_high,
+            plateau=args.roughness_plateau,
+            noise=args.roughness_noise,
+            seed=args.roughness_seed,
+        )
+    floor_height = floor.height_at(full_points[:, :2])
+    geometric_gap = full_points[:, 2] - floor_height
+    floor.write_vtu(output_dir / f"floor_{args.floor_kind}.vtu")
+    np.savez(
+        output_dir / "floor.npz",
+        x=floor.x,
+        y=floor.y,
+        height=floor.height,
+        floor_kind=args.floor_kind,
+        floor_level=args.floor_level,
+        floor_grid_size=args.floor_grid_size,
+        floor_margin=args.floor_margin,
+        roughness_rms=args.roughness_rms,
+        roughness_hurst=args.roughness_hurst,
+        roughness_k_low=args.roughness_k_low,
+        roughness_k_high=args.roughness_k_high,
+        roughness_seed=args.roughness_seed,
+        roughness_plateau=args.roughness_plateau,
+        roughness_noise=args.roughness_noise,
+    )
+    floor_build_seconds = perf_counter() - start
+    print(
+        f"{args.floor_kind} floor={args.floor_grid_size} x "
+        f"{args.floor_grid_size} regular cells, bounds="
+        f"x[{floor.x[0]:.6g}, {floor.x[-1]:.6g}], "
+        f"y[{floor.y[0]:.6g}, {floor.y[-1]:.6g}], "
+        f"height=[{floor.height.min():.3e}, {floor.height.max():.3e}]"
+    )
     strategy_start = perf_counter()
     samples = None
     compliance_source = None
@@ -396,6 +561,7 @@ def main() -> None:
                 n_sectors=ordering.n_sectors,
                 young_modulus=args.young_modulus,
                 poisson_ratio=args.poisson_ratio,
+                boundary_condition_id=BOUNDARY_CONDITION_ID,
             )
             compliance_load_seconds = perf_counter() - start
             print(
@@ -455,11 +621,9 @@ def main() -> None:
             "the factorized FE stiffness"
         )
 
-    output_dir = mesh_path.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
     inflation_values = inflation_displacement.getArray(readonly=True)
     full_gap = (
-        full_points[:, 2]
+        geometric_gap
         + inflation_values[ordering.parent_z_dofs.ravel()]
     )
     candidate_indices = potential_contact_indices(
@@ -684,7 +848,11 @@ def main() -> None:
             potential_rounds=0 if args.sampling_only else solve_rounds,
             inflation_displacement=inflation_values,
             inflation_pressure=args.inflation_pressure,
-            archive_format_version=3,
+            floor_kind=args.floor_kind,
+            floor_level=args.floor_level,
+            floor_grid_size=args.floor_grid_size,
+            archive_format_version=4,
+            boundary_condition_id=BOUNDARY_CONDITION_ID,
             young_modulus=args.young_modulus,
             poisson_ratio=args.poisson_ratio,
             axial_divisions=args.axial_divisions,
@@ -713,7 +881,8 @@ def main() -> None:
         f"complementarity={complementarity:.3e}"
     )
     print(
-        f"strategy timings: factorization={factorization_seconds:.3f}s, "
+        f"strategy timings: floor={floor_build_seconds:.3f}s, "
+        f"factorization={factorization_seconds:.3f}s, "
         f"inflation solve={inflation_solve_seconds:.3f}s, "
         f"compliance load={compliance_load_seconds:.3f}s, "
         f"compliance sampling={compliance_sampling_seconds:.3f}s, "
@@ -752,6 +921,58 @@ def main() -> None:
     u_result.x.array[:] = displacement_values
     u_result.x.scatter_forward()
 
+    contact_displacement = fem.Function(V)
+    contact_displacement.name = "contact_displacement"
+    contact_displacement.x.array[:] = displacement_values - inflation_values
+    contact_displacement.x.scatter_forward()
+
+    start = perf_counter()
+    contact_scalar_dofs = ordering.scalar_dofs.ravel()
+    contact_areas = surface_lumped_nodal_areas(
+        Wz, facet_tags, CONTACT_TAG, contact_scalar_dofs
+    )
+    contact_pressure_force_based = force_based_contact_pressure(
+        Wz,
+        contact_scalar_dofs,
+        full_force,
+        contact_areas,
+        name="contact_pressure_force_based",
+    )
+    contact_pressure_stress = project_compressive_normal_stress(
+        contact_displacement,
+        Wz,
+        facet_tags,
+        CONTACT_TAG,
+        contact_scalar_dofs,
+        young_modulus=args.young_modulus,
+        poisson_ratio=args.poisson_ratio,
+        name="contact_pressure_stress",
+    )
+    pressure_force_values = np.array(
+        contact_pressure_force_based.x.array[contact_scalar_dofs], copy=True
+    )
+    pressure_stress_values = np.array(
+        contact_pressure_stress.x.array[contact_scalar_dofs], copy=True
+    )
+    force_resultant_from_pressure = float(
+        pressure_force_values @ contact_areas
+    )
+    if not np.isclose(
+        force_resultant_from_pressure,
+        float(full_force.sum()),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    ):
+        raise RuntimeError("force-based contact pressure does not preserve force")
+    pressure_postprocess_seconds = perf_counter() - start
+    print(
+        "contact pressure: force/area resultant="
+        f"{force_resultant_from_pressure:.6e}, stress-normal resultant="
+        f"{float(pressure_stress_values @ contact_areas):.6e}, "
+        f"associated area={contact_areas.sum():.6e}, "
+        f"recovery time={pressure_postprocess_seconds:.3f}s"
+    )
+
     nodal_force = fem.Function(Wz)
     nodal_force.name = "nodal_contact_force"
     nodal_force.x.array[:] = 0.0
@@ -766,15 +987,42 @@ def main() -> None:
     ] = 1.0
     potential_zone.x.scatter_forward()
 
+    initial_gap_field = _contact_scalar_field(
+        Wz, contact_scalar_dofs, geometric_gap, "initial_gap"
+    )
+    floor_height_field = _contact_scalar_field(
+        Wz, contact_scalar_dofs, floor_height, "floor_height_projection"
+    )
+    associated_area_field = _contact_scalar_field(
+        Wz, contact_scalar_dofs, contact_areas, "contact_associated_area"
+    )
+
     vtk_path = output_dir / f"tyre_dihedral_contact_{args.compliance_strategy}.pvd"
     with VTKFile(comm, str(vtk_path), "w") as vtk:
         vtk.write_mesh(mesh)
-        vtk.write_function([u_result, nodal_force, potential_zone])
+        vtk.write_function(
+            [
+                u_result,
+                contact_displacement,
+                nodal_force,
+                potential_zone,
+                initial_gap_field,
+                floor_height_field,
+                associated_area_field,
+                contact_pressure_stress,
+                contact_pressure_force_based,
+            ]
+        )
 
     result_payload = {
         "force": full_force,
         "gap": full_gap,
         "clearance": full_clearance,
+        "initial_gap": geometric_gap,
+        "floor_height": floor_height,
+        "contact_associated_area": contact_areas,
+        "contact_pressure_stress": pressure_stress_values,
+        "contact_pressure_force_based": pressure_force_values,
         "candidate_indices": candidate_indices,
         "initial_potential_contact_unknowns": initial_candidate_count,
         "potential_contact_unknowns": candidate_indices.size,
@@ -786,10 +1034,22 @@ def main() -> None:
         "circumferential_divisions": args.circumferential_divisions,
         "scale": args.scale,
         "indentation": args.indentation,
+        "floor_kind": args.floor_kind,
+        "floor_level": args.floor_level,
+        "floor_grid_size": args.floor_grid_size,
+        "floor_margin": args.floor_margin,
+        "roughness_rms": args.roughness_rms,
+        "roughness_hurst": args.roughness_hurst,
+        "roughness_k_low": args.roughness_k_low,
+        "roughness_k_high": args.roughness_k_high,
+        "roughness_seed": args.roughness_seed,
+        "roughness_plateau": args.roughness_plateau,
+        "roughness_noise": args.roughness_noise,
         "young_modulus": args.young_modulus,
         "poisson_ratio": args.poisson_ratio,
         "inflation_pressure": args.inflation_pressure,
         "displacement": displacement_values,
+        "contact_displacement": displacement_values - inflation_values,
         "inflation_displacement": inflation_values,
         "residual": result.residual,
         "status": result.status.value,
@@ -798,6 +1058,8 @@ def main() -> None:
         "contact_solver": args.contact_solver,
         "preconditioner": preconditioner_name,
         "compliance_strategy": args.compliance_strategy,
+        "boundary_condition_id": BOUNDARY_CONDITION_ID,
+        "floor_build_seconds": floor_build_seconds,
         "factorization_seconds": factorization_seconds,
         "inflation_solve_seconds": inflation_solve_seconds,
         "compliance_load_seconds": compliance_load_seconds,
@@ -807,6 +1069,7 @@ def main() -> None:
         "verification_seconds": verification_seconds,
         "strategy_total_seconds": strategy_total_seconds,
         "final_solve_seconds": final_solve_seconds,
+        "pressure_postprocess_seconds": pressure_postprocess_seconds,
         "compliance_stored_entries": (
             h_stats["memory_entries"]
             if args.compliance_strategy == "hmatrix"
