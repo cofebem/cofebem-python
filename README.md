@@ -125,6 +125,20 @@ See [rough floor contact](docs/rough_floor_contact.md) for the rfgen controls,
 gap convention, pressure definitions, outputs, and current vertical-contact
 scope.
 
+The tyre can remain fixed while the floor is indented, tilted about global
+`OY`, twisted about global `OZ`, and translated in `X/Y`. A JSON key-frame
+history is linearly interpolated and solved with one reused PETSc
+factorization:
+
+```bash
+conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
+  --axial-divisions 100 --circumferential-divisions 200 \
+  --motion-file examples/tyre_floor_motion.json
+```
+
+See [moving-floor tyre contact](docs/floor_motion.md) for the JSON schema,
+rotation convention, outputs, and measured LU-persistence decision.
+
 By default, the example builds and solves only the part of the tyre whose
 inflation-adjusted free gap is within `--warning-distance 0.02` of the road.
 It certifies excluded nodes with a chunked full-target evaluation and expands

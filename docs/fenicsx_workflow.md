@@ -254,6 +254,12 @@ nodal-force resultant. The regular floor is written separately as VTU and NPZ.
 See [`rough_floor_contact.md`](rough_floor_contact.md) for commands,
 parameters, assumptions, and stress-recovery caveats.
 
+For load histories, [`floor_motion.md`](floor_motion.md) describes the fixed
+tyre/moving-floor convention. Scheduled indentation, `OY` slope, `OZ` torsion,
+and `X/Y` sliding reuse the same assembled stiffness, PETSc LU factorization,
+inflation solution, and compliance data. The union potential zone is solved
+sequentially with force warm starts.
+
 The H-matrix implementation reports sector alignment, reflection parity, sampled
 reciprocity, H-matrix storage, and entry-query counts. Symmetric H-matrix
 storage enforces reciprocity without constructing or projecting a global

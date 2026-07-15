@@ -94,6 +94,9 @@ migrate adapters toward `cofebem/lcp` with compatibility tests.
 Sphere, cone, and plane modules provide gap functions used by the adapters.
 `regular_floor.py` provides bilinear projection onto flat and rfgen-generated
 self-affine regular floors plus VTU export.
+`floor_motion.py` validates and interpolates JSON motion histories, applies
+rigid `Rz @ Ry` transformations, intersects vertical rays with transformed
+rough height fields, and writes moving-floor ParaView collections.
 Some files remain experimental: `cylinder_indenter.py` performs file I/O and a
 full comparison at import time and should not be treated as a library module.
 
@@ -159,6 +162,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   the H-matrix versus matrix-free tyre benchmark.
 - `docs/rough_floor_contact.md`: rfgen floor construction, projected gap,
   pressure recovery, CLI, and output fields.
+- `docs/floor_motion.md`: floor kinematics, JSON load histories, factorization
+  reuse, moving outputs, and the LU-persistence benchmark.
 - `docs/naming_conventions.md`: naming style.
 - `ScSPD.md`: mathematical note on LCP uniqueness and SPD preservation.
 - `Interpolation_idea.md`: research note, not an implemented contract.

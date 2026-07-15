@@ -141,6 +141,13 @@ class RegularFloor:
 
     def height_at(self, projected_xy: np.ndarray) -> np.ndarray:
         """Bilinearly interpolate floor height at projected ``(x, y)`` points."""
+        height, _ = self.height_and_gradient_at(projected_xy)
+        return height
+
+    def height_and_gradient_at(
+        self, projected_xy: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Interpolate height and its piecewise-bilinear in-plane gradient."""
         points = np.asarray(projected_xy, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2:
             raise ValueError("projected_xy must have shape (n, 2)")
@@ -175,12 +182,17 @@ class RegularFloor:
         h10 = self.height[iy, ix + 1]
         h01 = self.height[iy + 1, ix]
         h11 = self.height[iy + 1, ix + 1]
-        return (
+        height = (
             (1.0 - tx) * (1.0 - ty) * h00
             + tx * (1.0 - ty) * h10
             + (1.0 - tx) * ty * h01
             + tx * ty * h11
         )
+        dx = self.x[ix + 1] - self.x[ix]
+        dy = self.y[iy + 1] - self.y[iy]
+        dh_dx = ((1.0 - ty) * (h10 - h00) + ty * (h11 - h01)) / dx
+        dh_dy = ((1.0 - tx) * (h01 - h00) + tx * (h11 - h10)) / dy
+        return height, np.column_stack((dh_dx, dh_dy))
 
     def project(self, points: np.ndarray) -> np.ndarray:
         """Vertically project three-dimensional points onto the floor."""

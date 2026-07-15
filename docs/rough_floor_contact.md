@@ -27,8 +27,9 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
   --indentation 1e-2 --floor flat --floor-grid-size 256
 ```
 
-The tyre translation interprets indentation relative to `floor-level`, so this
-reproduces the previous `z=0` gap when the default level is used.
+The tyre is aligned once at zero indentation. Indentation then moves the floor
+upward relative to the fixed tyre, reproducing the previous gap while allowing
+one FE stiffness and factorization to be reused over a motion history.
 
 ## rfgen rough floor
 
@@ -91,9 +92,11 @@ The tyre PVD/VTU contains:
 - nodal contact force and potential-zone indicator.
 
 The result NPZ stores the same contact arrays in sector-major ordering.
-`floor_flat.vtu` or `floor_rough.vtu` contains the regular floor geometry with
-`floor_height` and `floor_normal`; `floor.npz` stores the exact grid, height
-array, and generation parameters for reproducibility.
+For a static solve, `floor_flat.vtu` or `floor_rough.vtu` contains the moved
+regular floor geometry with `floor_height` and `floor_normal`. A motion history
+uses `floor_motion.pvd` and one VTU per state. `floor.npz` stores the reference
+grid, height array, expanded motion, and generation parameters. See
+[`floor_motion.md`](floor_motion.md).
 
 ## Small validation
 
