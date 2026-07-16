@@ -1,8 +1,9 @@
 """Compliance sampling for a tyre with discrete rotational symmetry.
 
-The tyre axis is the global x axis.  A global road-normal (z) load does not
-remain a z load when rotated to a reference meridian, so reconstruction needs
-the 2x2 transverse (y/z) compliance tensor rather than a scalar cyclic shift.
+The tyre axis is the global x axis. A global road-normal (z) load does not
+remain a z load when rotated to a reference meridian. Reconstruction therefore
+samples two auxiliary y/z load directions, but stores only the three tensor
+combinations needed by the scalar normal compliance operator.
 """
 
 from __future__ import annotations
@@ -169,12 +170,13 @@ class FactorizedComplianceOperator:
 
 
 class DihedralComplianceEntrySource(MatrixEntrySource):
-    """Global-z compliance entries derived from one sampled axial meridian.
+    """Global-z normal compliance entries from one sampled axial meridian.
 
-    The stored data are the y/z responses at every surface node to y/z loads
-    at the axial nodes of sector zero.  Rotation maps any requested global
-    source/target pair back to that reference data.  Thus ``get_block`` can
-    answer ACA cross queries without ever reconstructing the full ``S_c``.
+    New archives store only the three combinations used by the scalar normal
+    operator: ``yy``, ``yz + zy``, and ``zz``. Legacy archives containing the
+    complete 2x2 y/z tensor remain accepted. Rotation maps any requested
+    global source/target pair back to that reference data, so ``get_block``
+    can answer ACA cross queries without reconstructing the full ``S_c``.
 
     Matrix indices follow the sector-major, axial-minor ordering produced by
     :func:`order_contact_sectors`: rows are target nodes and columns are
@@ -183,11 +185,22 @@ class DihedralComplianceEntrySource(MatrixEntrySource):
 
     def __init__(self, samples: np.ndarray):
         samples = np.asarray(samples, dtype=float)
-        if samples.ndim != 5 or samples.shape[0] != 2 or samples.shape[2] != 2:
+        if samples.ndim == 4 and samples.shape[0] == 3:
+            _, n_axial, n_sectors, target_axial = samples.shape
+            self.compact_normal = True
+        elif (
+            samples.ndim == 5
+            and samples.shape[0] == 2
+            and samples.shape[2] == 2
+        ):
+            _, n_axial, _, n_sectors, target_axial = samples.shape
+            self.compact_normal = False
+        else:
             raise ValueError(
-                "samples must have shape (2, n_axial, 2, n_sectors, n_axial)"
+                "samples must have compact shape "
+                "(3, n_axial, n_sectors, n_axial) or legacy shape "
+                "(2, n_axial, 2, n_sectors, n_axial)"
             )
-        _, n_axial, _, n_sectors, target_axial = samples.shape
         if target_axial != n_axial:
             raise ValueError("source and target axial sizes must match")
         if not np.all(np.isfinite(samples)):
@@ -213,6 +226,17 @@ class DihedralComplianceEntrySource(MatrixEntrySource):
 
         angle = source_sector * (2.0 * np.pi / self.n_sectors)
         q = (np.sin(angle), np.cos(angle))
+        if self.compact_normal:
+            return (
+                q[0] ** 2
+                * self.samples[0, source_axial, delta, target_axial]
+                + q[0]
+                * q[1]
+                * self.samples[1, source_axial, delta, target_axial]
+                + q[1] ** 2
+                * self.samples[2, source_axial, delta, target_axial]
+            )
+
         values = np.zeros(np.broadcast_shapes(target.shape, source.shape), dtype=float)
         for force_component in range(2):
             for response_component in range(2):
@@ -320,13 +344,37 @@ def load_dihedral_compliance_archive(
 
     try:
         with np.load(archive_path, allow_pickle=False) as archive:
-            missing = {"samples", "points"}.difference(archive.files)
+            missing = {"points"}.difference(archive.files)
             if missing:
                 names = ", ".join(sorted(missing))
                 raise ValueError(
                     f"Compliance archive {archive_path} is missing: {names}"
                 )
-            samples = np.array(archive["samples"], dtype=float, copy=True)
+            if "samples_file" in archive.files:
+                stored_path = np.asarray(archive["samples_file"])
+                if stored_path.size != 1:
+                    raise ValueError(
+                        "Compliance archive field 'samples_file' must be scalar"
+                    )
+                samples_path = Path(str(stored_path.reshape(-1)[0])).expanduser()
+                if not samples_path.is_absolute():
+                    samples_path = archive_path.parent / samples_path
+                if not samples_path.is_file():
+                    raise ValueError(
+                        "Compliance sample sidecar does not exist: "
+                        f"{samples_path.resolve()}"
+                    )
+                samples = np.load(samples_path, mmap_mode="r", allow_pickle=False)
+            elif "samples" in archive.files:
+                # Accessing an NPZ member already materializes a standalone
+                # ndarray; an additional copy would double peak memory for
+                # multi-gigabyte reference tensors.
+                samples = np.asarray(archive["samples"], dtype=float)
+            else:
+                raise ValueError(
+                    f"Compliance archive {archive_path} is missing: "
+                    "samples or samples_file"
+                )
             saved_points = np.array(archive["points"], dtype=float, copy=True)
 
             metadata: dict[str, object] = {}
@@ -436,6 +484,103 @@ def load_dihedral_compliance_archive(
             )
 
     return samples
+
+
+def compact_normal_compliance_samples(samples: np.ndarray) -> np.ndarray:
+    """Return the three tensor combinations needed by normal contact.
+
+    The compact component axis contains ``yy``, ``yz + zy``, and ``zz``.
+    Contracting these values with ``(sin(theta), cos(theta))`` is exactly
+    equivalent to contracting the complete legacy 2x2 tensor. No tangential
+    contact operator is retained.
+    """
+    values = np.asarray(samples)
+    if values.ndim == 4 and values.shape[0] == 3:
+        if values.shape[1] != values.shape[3]:
+            raise ValueError("source and target axial sizes must match")
+        return values
+    if (
+        values.ndim != 5
+        or values.shape[0] != 2
+        or values.shape[2] != 2
+        or values.shape[1] != values.shape[4]
+    ):
+        raise ValueError(
+            "samples must have compact shape "
+            "(3, n_axial, n_sectors, n_axial) or legacy shape "
+            "(2, n_axial, 2, n_sectors, n_axial)"
+        )
+
+    compact = np.empty(
+        (3, values.shape[1], values.shape[3], values.shape[4]),
+        dtype=np.result_type(values.dtype, np.float64),
+    )
+    compact[0] = values[0, :, 0]
+    np.add(values[0, :, 1], values[1, :, 0], out=compact[1])
+    compact[2] = values[1, :, 1]
+    return compact
+
+
+def memory_map_compliance_samples(
+    samples: np.ndarray,
+    path: str | Path,
+) -> np.memmap:
+    """Persist compact normal samples as NPY and reopen them as a memmap."""
+    values = np.asarray(samples)
+    if values.ndim == 5:
+        if (
+            values.shape[0] != 2
+            or values.shape[2] != 2
+            or values.shape[1] != values.shape[4]
+        ):
+            compact_normal_compliance_samples(values)
+        compact_values = None
+        compact_shape = (3, values.shape[1], values.shape[3], values.shape[4])
+    else:
+        compact_values = compact_normal_compliance_samples(values)
+        compact_shape = compact_values.shape
+    output = Path(path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    current_filename = getattr(samples, "filename", None)
+    source_is_output = (
+        current_filename is not None
+        and Path(current_filename).resolve() == output
+    )
+    if (
+        source_is_output
+        and values.ndim == 4
+        and values.dtype == np.float64
+    ):
+        mapped = np.load(output, mmap_mode="r", allow_pickle=False)
+        if not isinstance(mapped, np.memmap):
+            raise RuntimeError("NumPy did not reopen compliance samples as a memmap")
+        return mapped
+
+    destination = (
+        output.with_name(f".{output.name}.compact.tmp")
+        if source_is_output
+        else output
+    )
+    mapped_output = np.lib.format.open_memmap(
+        destination,
+        mode="w+",
+        dtype=np.float64,
+        shape=compact_shape,
+    )
+    if values.ndim == 5:
+        mapped_output[0] = values[0, :, 0]
+        np.add(values[0, :, 1], values[1, :, 0], out=mapped_output[1])
+        mapped_output[2] = values[1, :, 1]
+    else:
+        mapped_output[:] = compact_values
+    mapped_output.flush()
+    del mapped_output
+    if destination != output:
+        destination.replace(output)
+    mapped = np.load(output, mmap_mode="r", allow_pickle=False)
+    if not isinstance(mapped, np.memmap):
+        raise RuntimeError("NumPy did not reopen compliance samples as a memmap")
+    return mapped
 
 
 def infer_regular_sector_shape(
@@ -663,7 +808,7 @@ def create_lu_solver(
     return ksp
 
 
-def sample_reference_transverse_compliance(
+def sample_reference_normal_compliance(
     A: PETSc.Mat,
     ksp: PETSc.KSP,
     ordering: SectorOrdering,
@@ -671,11 +816,13 @@ def sample_reference_transverse_compliance(
     force_magnitude: float = 1.0,
     show_progress: bool = True,
 ) -> np.ndarray:
-    """Sample y/z loads only on the axial nodes of reference sector zero.
+    """Sample the compact scalar normal operator at one axial meridian.
 
-    Returns an array with axes ``(force_component, source_axial,
-    response_component, target_sector, target_axial)``. Components 0 and 1
-    denote global y and z at the zero-angle reference meridian.
+    The returned axes are ``(normal_component, source_axial, target_sector,
+    target_axial)``. The three normal components are ``yy``, ``yz + zy``, and
+    ``zz``. Two auxiliary y/z load solves remain necessary because a fixed
+    global-z road load rotates into both directions away from sector zero,
+    but the unused antisymmetric part of the transverse response is discarded.
     """
     if A.comm.size != 1:
         raise NotImplementedError(
@@ -686,7 +833,7 @@ def sample_reference_transverse_compliance(
         raise ValueError("force_magnitude must be nonzero")
 
     n_sectors, n_axial = ordering.scalar_dofs.shape
-    samples = np.empty((2, n_axial, 2, n_sectors, n_axial), dtype=float)
+    samples = np.zeros((3, n_axial, n_sectors, n_axial), dtype=float)
     response_dofs = (ordering.parent_y_dofs.ravel(), ordering.parent_z_dofs.ravel())
     source_dofs = (ordering.parent_y_dofs[0], ordering.parent_z_dofs[0])
 
@@ -696,7 +843,7 @@ def sample_reference_transverse_compliance(
     if show_progress:
         from tqdm import tqdm
 
-        jobs = tqdm(jobs, desc="Sampling axial y/z compliance", unit="solve")
+        jobs = tqdm(jobs, desc="Sampling axial normal compliance", unit="solve")
 
     for force_component, source_axial in jobs:
         rhs.set(0.0)
@@ -709,12 +856,40 @@ def sample_reference_transverse_compliance(
         ksp.solve(rhs, displacement)
 
         values = displacement.getArray(readonly=True)
-        for response_component, dofs in enumerate(response_dofs):
-            samples[force_component, source_axial, response_component] = (
-                values[dofs].reshape(n_sectors, n_axial) / force_magnitude
-            )
+        response_y = (
+            values[response_dofs[0]].reshape(n_sectors, n_axial)
+            / force_magnitude
+        )
+        response_z = (
+            values[response_dofs[1]].reshape(n_sectors, n_axial)
+            / force_magnitude
+        )
+        if force_component == 0:
+            samples[0, source_axial] = response_y
+            samples[1, source_axial] = response_z
+        else:
+            samples[1, source_axial] += response_y
+            samples[2, source_axial] = response_z
 
     return samples
+
+
+def sample_reference_transverse_compliance(
+    A: PETSc.Mat,
+    ksp: PETSc.KSP,
+    ordering: SectorOrdering,
+    *,
+    force_magnitude: float = 1.0,
+    show_progress: bool = True,
+) -> np.ndarray:
+    """Compatibility alias for :func:`sample_reference_normal_compliance`."""
+    return sample_reference_normal_compliance(
+        A,
+        ksp,
+        ordering,
+        force_magnitude=force_magnitude,
+        show_progress=show_progress,
+    )
 
 
 def reconstruct_vertical_compliance(samples: np.ndarray) -> np.ndarray:
@@ -731,20 +906,32 @@ def reconstruct_vertical_compliance(samples: np.ndarray) -> np.ndarray:
 
 
 def dihedral_reflection_error(samples: np.ndarray) -> float:
-    """Return the relative D_n reflection mismatch of the sampled y/z tensors."""
+    """Return the relative D_n reflection mismatch of sampled normal data."""
     samples = np.asarray(samples, dtype=float)
-    n_sectors = samples.shape[3]
-    reflection = np.array([1.0, -1.0])
+    if samples.ndim == 4 and samples.shape[0] == 3:
+        n_sectors = samples.shape[2]
+        component_parity = np.array([1.0, -1.0, 1.0])
+        sector_axis = 2
+    elif samples.ndim == 5 and samples.shape[0] == 2 and samples.shape[2] == 2:
+        n_sectors = samples.shape[3]
+        reflection = np.array([1.0, -1.0])
+        sector_axis = 3
+    else:
+        raise ValueError("invalid normal-compliance sample shape")
     mismatch_sq = 0.0
     norm_sq = 0.0
     for delta in range(n_sectors):
         mirrored = (-delta) % n_sectors
-        expected = (
-            samples[:, :, :, delta, :]
-            * reflection[:, None, None, None]
-            * reflection[None, None, :, None]
-        )
-        actual = samples[:, :, :, mirrored, :]
+        if sector_axis == 2:
+            expected = samples[:, :, delta, :] * component_parity[:, None, None]
+            actual = samples[:, :, mirrored, :]
+        else:
+            expected = (
+                samples[:, :, :, delta, :]
+                * reflection[:, None, None, None]
+                * reflection[None, None, :, None]
+            )
+            actual = samples[:, :, :, mirrored, :]
         mismatch_sq += float(np.linalg.norm(actual - expected) ** 2)
         norm_sq += float(np.linalg.norm(actual) ** 2)
     return float(np.sqrt(mismatch_sq / max(norm_sq, np.finfo(float).tiny)))

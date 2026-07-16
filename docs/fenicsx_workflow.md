@@ -171,8 +171,8 @@ fixed facet/vertex counts and cylindrical geometry before assembly.
 
 A fixed global-z road force rotates into both y and z components when mapped
 to the zero-angle tyre meridian. The example therefore performs two PETSc LU
-solves per axial reference node, samples the complete transverse 2x2 response,
-and rotates that tensor to construct the global-z compliance. Repeating a
+solves per axial reference node, but stores only the three combinations `yy`,
+`yz + zy`, and `zz` used by the single scalar normal H-matrix. Repeating a
 single scalar row with `np.roll`, as in the older z-axis annulus example, is not
 valid for this geometry.
 

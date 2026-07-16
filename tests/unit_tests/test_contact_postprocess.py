@@ -74,3 +74,19 @@ def test_stress_projection_recovers_uniform_compressive_pressure():
 
     assert pressure.name == "contact_pressure_stress"
     np.testing.assert_allclose(pressure.x.array[dofs], expected, rtol=1.0e-12)
+
+    areas = surface_lumped_nodal_areas(scalar_space, tags, 7, dofs)
+    lumped_pressure = project_compressive_normal_stress(
+        displacement,
+        scalar_space,
+        tags,
+        7,
+        dofs,
+        young_modulus=young_modulus,
+        poisson_ratio=poisson_ratio,
+        projection="lumped",
+        nodal_areas=areas,
+    )
+    np.testing.assert_allclose(
+        lumped_pressure.x.array[dofs], expected, rtol=1.0e-12
+    )

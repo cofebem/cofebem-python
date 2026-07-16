@@ -3,12 +3,14 @@ import pytest
 from petsc4py import PETSc
 
 from cofebem.fenics.dihedral_compliance import (
+    compact_normal_compliance_samples,
     DihedralComplianceEntrySource,
     FactorizedComplianceOperator,
     create_lu_solver,
     dihedral_reflection_error,
     infer_regular_sector_shape,
     load_dihedral_compliance_archive,
+    memory_map_compliance_samples,
     order_contact_sectors,
     dilate_sector_axial_mask,
     potential_contact_indices,
@@ -111,6 +113,19 @@ def test_entry_source_matches_dense_reconstruction_for_selected_cross():
         source.get_block(rows, columns), dense[np.ix_(rows, columns)]
     )
     assert source.stats()["largest_query"] == (4, 3)
+
+
+def test_compact_normal_samples_preserve_all_scalar_entries():
+    rng = np.random.default_rng(17)
+    transverse = rng.standard_normal((2, 3, 2, 6, 3))
+    compact = compact_normal_compliance_samples(transverse)
+    indices = np.arange(18)
+
+    assert compact.shape == (3, 3, 6, 3)
+    np.testing.assert_allclose(
+        DihedralComplianceEntrySource(compact).get_block(indices, indices),
+        DihedralComplianceEntrySource(transverse).get_block(indices, indices),
+    )
 
 
 def test_dihedral_reflection_error_detects_wrong_cross_component_parity():
@@ -225,6 +240,33 @@ def test_load_compliance_accepts_rigid_translation(tmp_path):
     )
 
     np.testing.assert_array_equal(loaded, samples)
+
+
+def test_load_compliance_memory_mapped_sidecar(tmp_path):
+    samples = np.arange(96, dtype=float).reshape(2, 2, 2, 6, 2)
+    points = np.arange(36, dtype=float).reshape(12, 3)
+    samples_path = tmp_path / "compliance_samples.npy"
+    mapped = memory_map_compliance_samples(samples, samples_path)
+    np.savez(
+        tmp_path / "compliance.npz",
+        samples_file=samples_path.name,
+        points=points,
+        axial_divisions=1,
+        circumferential_divisions=6,
+    )
+
+    loaded = load_dihedral_compliance_archive(
+        tmp_path / "compliance.npz",
+        points,
+        n_axial=2,
+        n_sectors=6,
+    )
+
+    assert isinstance(mapped, np.memmap)
+    assert isinstance(loaded, np.memmap)
+    np.testing.assert_array_equal(
+        loaded, compact_normal_compliance_samples(samples)
+    )
 
 
 def test_load_compliance_rejects_geometry_or_material_mismatch(tmp_path):

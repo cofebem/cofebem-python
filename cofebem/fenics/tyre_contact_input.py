@@ -51,6 +51,7 @@ _SECTIONS: dict[str, dict[str, str]] = {
         "strategy": "compliance_strategy",
         "load": "load_compliance",
         "factor_solver_type": "factor_solver_type",
+        "memory_map": "mmap_compliance",
     },
     "solver": {
         "contact_method": "contact_solver",
@@ -76,6 +77,11 @@ _SECTIONS: dict[str, dict[str, str]] = {
     "execution": {
         "sampling_only": "sampling_only",
         "show_progress": "show_progress",
+    },
+    "postprocessing": {
+        "stress_projection": "stress_projection",
+        "write_vtk": "write_vtk",
+        "save_volume_fields": "save_volume_fields",
     },
 }
 

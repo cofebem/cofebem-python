@@ -61,7 +61,7 @@ Two positive-compression conventions are saved on the tyre contact surface:
 
 ```text
 contact_pressure_force_based[i] = nodal_force[i] / associated_area[i]
-contact_pressure_stress          = L2 projection of -n . sigma(u_contact) . n
+contact_pressure_stress          = projection of -n . sigma(u_contact) . n
 u_contact                        = u_final - u_inflation
 ```
 
@@ -78,6 +78,12 @@ excluding the inflation preload. It is a raw signed FE stress recovery. It can
 oscillate and differ substantially from force/area near nodal loads, especially
 for nearly incompressible CG1 elements; this difference is diagnostic rather
 than silently clipped or rescaled.
+
+The tyre example defaults to a mass-lumped projection: the assembled stress
+load is divided by the consistent nodal area. This preserves constant stress
+without constructing or factorizing another surface matrix. Select
+`postprocessing.stress_projection: "consistent"` for the previous full L2
+projection when memory permits.
 
 ## Outputs
 

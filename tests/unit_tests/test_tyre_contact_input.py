@@ -95,6 +95,7 @@ def test_repository_example_is_complete_and_loadable():
         "compliance_strategy",
         "load_compliance",
         "factor_solver_type",
+        "mmap_compliance",
         "contact_solver",
         "max_iter",
         "tol",
@@ -112,5 +113,8 @@ def test_repository_example_is_complete_and_loadable():
         "warning_verification_tol",
         "sampling_only",
         "no_progress",
+        "stress_projection",
+        "write_vtk",
+        "save_volume_fields",
     }
     assert data.motion is not None

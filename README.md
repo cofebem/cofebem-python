@@ -75,8 +75,9 @@ been made MPI-safe.
 
 `examples/tyre_dihedral_contact.py` generates a full structured hexahedral tyre
 from `geo_files/geometry_v2.geo`, with configurable axial and circumferential
-divisions. Its default strategy samples two transverse load directions on one
-reference meridian and uses discrete dihedral symmetry to build a symmetric
+divisions. Its default strategy uses two auxiliary load directions on one
+reference meridian to retain the fixed road-normal direction, contracts them
+into three scalar-normal sample fields, and builds one symmetric normal
 H-matrix directly from ACA entry queries. An alternative flexibility-matrix-
 free strategy applies the exact contact compliance by back-solving the already
 factorized FE stiffness during every PPCG operator application. Both apply the
@@ -150,6 +151,11 @@ python examples/tyre_dihedral_contact.py -in examples/input.json
 See [complete tyre-contact input](docs/tyre_contact_input.md) for the schema,
 relative-path behavior, and CLI override rules.
 
+Large cases default to memory-mapped compliance samples and mass-lumped stress
+recovery, avoiding a second direct factorization during postprocessing. Volume
+fields are streamed to VTK but are not duplicated in every step NPZ unless
+requested.
+
 By default, the example builds and solves only the part of the tyre whose
 inflation-adjusted free gap is within `--warning-distance 0.02` of the road.
 It certifies excluded nodes with a chunked full-target evaluation and expands
@@ -159,9 +165,10 @@ the zone around any penetration before repeating the restricted solve. Use
 tuning, and output fields.
 
 Use `--sampling-only` to stop after constructing the H-matrix. The saved
-`compliance.npz` contains the sampled reference tensor and H-matrix statistics,
-not a dense global `S_c`. Reuse those samples without repeating the compliance
-solves with:
+`compliance.npz` contains metadata and H-matrix statistics and refers to the
+memory-mapped reference tensor in `compliance_samples.npy`; neither file is a
+dense global `S_c`. Reuse those samples without repeating the compliance solves
+with:
 
 ```bash
 conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \

@@ -133,13 +133,15 @@ explicit adapter protocol.
 
 `cofebem/fenics/dihedral_compliance.py` handles the tyre-specific symmetry
 path. Because the tyre revolves about x while road contact acts in global z,
-it samples y/z loads and responses at one reference meridian and rotates the
-resulting transverse tensor only for entries requested by H-matrix
-construction. This reduces full vertical compliance sampling from
+it samples auxiliary y/z loads and responses at one reference meridian,
+contracts them into the three combinations needed by scalar normal contact,
+and rotates those data only for entries requested by the single normal
+H-matrix. This reduces full vertical compliance sampling from
 `N_theta * N_axial` solves to `2 * N_axial` solves while retaining the correct
-fixed road-normal direction and avoiding global dense reconstruction. The inflation-only displacement is added
-to the undeformed road gap before solving the LCP, and inflation and contact
-loads are superposed in the final elastic solve.
+fixed road-normal direction and avoiding global dense reconstruction. The
+inflation-only displacement is added to the undeformed road gap before solving
+the LCP, and inflation and contact loads are superposed in the final elastic
+solve.
 
 The tyre stiffness fixes all displacement components only on the two mirrored
 3 mm disk-edge strips generated from template curves 8 and 153. The adjacent

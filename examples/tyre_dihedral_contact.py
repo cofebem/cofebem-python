@@ -1,9 +1,9 @@
 """Tyre-road contact with H-matrix or factorized-FE compliance actions.
 
 The mesh is generated from ``geo_files/geometry_v2.geo`` as a structured full
-tyre. The H-matrix strategy loads only the axial contact nodes of one reference
-meridian in two transverse directions, then answers ACA queries using dihedral
-symmetry. The flexibility-matrix-free strategy instead applies compliance by
+tyre. The H-matrix strategy samples compact scalar normal-compliance data at
+one reference meridian, then answers ACA queries using dihedral symmetry. The
+flexibility-matrix-free strategy instead applies compliance by
 back-solving the factorized FE stiffness for every PPCG request. Neither path
 constructs a global dense compliance.
 
@@ -19,6 +19,9 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
+import gc
+import mmap
 from pathlib import Path
 from time import perf_counter
 
@@ -50,12 +53,14 @@ from cofebem.fenics.dihedral_compliance import (
     dihedral_reflection_error,
     infer_regular_sector_shape,
     load_dihedral_compliance_archive,
+    memory_map_compliance_samples,
     order_contact_sectors,
     potential_contact_indices,
     restricted_source_clearance,
-    sample_reference_transverse_compliance,
+    sample_reference_normal_compliance,
 )
 from cofebem.fenics.contact_postprocess import (
+    ContactStressProjector,
     force_based_contact_pressure,
     project_compressive_normal_stress,
     surface_lumped_nodal_areas,
@@ -151,6 +156,36 @@ def _contact_scalar_field(space, dofs, values, name):
     field.x.array[np.asarray(dofs, dtype=np.int32)] = np.asarray(values)
     field.x.scatter_forward()
     return field
+
+
+def _set_contact_scalar_field(field, dofs, values) -> None:
+    """Update a reusable scalar output field without allocating a new function."""
+    field.x.array[:] = 0.0
+    field.x.array[np.asarray(dofs, dtype=np.int32)] = np.asarray(values)
+    field.x.scatter_forward()
+
+
+def _compliance_sample_archive_fields(samples, output_dir: Path) -> dict:
+    """Store a memmap reference instead of embedding multi-gigabyte samples."""
+    filename = getattr(samples, "filename", None)
+    if filename is None:
+        return {"samples": samples}
+    sample_path = Path(filename).expanduser().resolve()
+    try:
+        stored_path = sample_path.relative_to(output_dir.resolve())
+    except ValueError:
+        stored_path = sample_path
+    return {"samples_file": str(stored_path)}
+
+
+def _discard_memmap_pages(samples) -> bool:
+    """Advise the kernel to reclaim file-backed compliance pages if needed."""
+    mapping = getattr(samples, "_mmap", None)
+    advice = getattr(mmap, "MADV_DONTNEED", None)
+    if mapping is None or not hasattr(mapping, "madvise") or advice is None:
+        return False
+    mapping.madvise(advice)
+    return True
 
 
 def _assemble_elasticity(
@@ -363,6 +398,12 @@ def _parse_args(argv=None) -> argparse.Namespace:
         help="allowed negative clearance outside the potential zone",
     )
     parser.add_argument("--factor-solver-type", default=None)
+    parser.add_argument(
+        "--mmap-compliance",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="store sampled compliance in an on-disk NPY memory map",
+    )
     compliance_load_group = parser.add_mutually_exclusive_group()
     compliance_load_group.add_argument(
         "--load-compliance",
@@ -391,6 +432,21 @@ def _parse_args(argv=None) -> argparse.Namespace:
         "--progress", dest="no_progress", action="store_false"
     )
     parser.set_defaults(no_progress=False)
+    parser.add_argument(
+        "--stress-projection",
+        choices=("lumped", "consistent"),
+        default="lumped",
+        help="low-memory lumped or factorized consistent stress recovery",
+    )
+    parser.add_argument(
+        "--write-vtk", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--save-volume-fields",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="store full volume displacement arrays in every step NPZ",
+    )
 
     input_data = None
     if input_args.input_file is not None:
@@ -425,8 +481,7 @@ def _run_motion_history(
     output_dir,
     motion,
     floor_pivot,
-    floor_heights,
-    geometric_gaps,
+    full_gaps,
     inflation_values,
     compliance_source,
     samples,
@@ -436,8 +491,6 @@ def _run_motion_history(
     """Solve an interpolated floor history with one assembled/factorized FE model."""
     contact_parent_dofs = ordering.parent_z_dofs.ravel()
     contact_scalar_dofs = ordering.scalar_dofs.ravel()
-    inflation_contact = inflation_values[contact_parent_dofs]
-    full_gaps = geometric_gaps + inflation_contact[None, :]
     full_unknowns = full_points.shape[0]
     candidate_indices = potential_contact_indices(
         np.min(full_gaps, axis=0), args.warning_distance
@@ -478,7 +531,7 @@ def _run_motion_history(
             h_stats = operator.stats()
             query_stats = compliance_source.stats()
             print(
-                f"motion H-matrix stored entries={h_stats['memory_entries']}/"
+                f"motion normal H-matrix stored entries={h_stats['memory_entries']}/"
                 f"{points.shape[0] ** 2}, low-rank blocks={h_stats['low_rank']}, "
                 f"near-field blocks={h_stats['dense']}"
             )
@@ -494,7 +547,6 @@ def _run_motion_history(
     if args.compliance_strategy == "hmatrix":
         np.savez(
             output_dir / "compliance.npz",
-            samples=samples,
             points=full_points,
             gap=np.min(full_gaps, axis=0),
             candidate_indices=candidate_indices,
@@ -506,7 +558,7 @@ def _run_motion_history(
             floor_kind=args.floor_kind,
             floor_level=args.floor_level,
             floor_grid_size=args.floor_grid_size,
-            archive_format_version=5,
+            archive_format_version=7,
             boundary_condition_id=BOUNDARY_CONDITION_ID,
             young_modulus=args.young_modulus,
             poisson_ratio=args.poisson_ratio,
@@ -521,6 +573,7 @@ def _run_motion_history(
             h_dense_blocks=h_stats["dense"],
             source_queried_entries=query_stats["queried_entries"],
             reference_vertical_shift=reference_vertical_shift,
+            **_compliance_sample_archive_fields(samples, output_dir),
         )
 
     spectral_preconditioner = None
@@ -534,8 +587,12 @@ def _run_motion_history(
     contact_areas = surface_lumped_nodal_areas(
         Wz, facet_tags, CONTACT_TAG, contact_scalar_dofs
     )
-    associated_area_field = _contact_scalar_field(
-        Wz, contact_scalar_dofs, contact_areas, "contact_associated_area"
+    associated_area_field = (
+        _contact_scalar_field(
+            Wz, contact_scalar_dofs, contact_areas, "contact_associated_area"
+        )
+        if args.write_vtk
+        else None
     )
     previous_force = np.zeros(full_unknowns, dtype=float)
     step_dir = output_dir / "motion_steps"
@@ -556,14 +613,48 @@ def _run_motion_history(
     final_solve_seconds = 0.0
     pressure_seconds = 0.0
     total_iterations = 0
-    last_payload = None
+    rhs = pressure_rhs.copy()
+    displacement = A.createVecLeft()
+    u_result = fem.Function(V)
+    u_result.name = "displacement"
+    contact_displacement = fem.Function(V)
+    contact_displacement.name = "contact_displacement"
+    pressure_force = fem.Function(Wz)
+    pressure_force.name = "contact_pressure_force_based"
+    stress_projector = ContactStressProjector(
+        contact_displacement,
+        Wz,
+        facet_tags,
+        CONTACT_TAG,
+        contact_scalar_dofs,
+        young_modulus=args.young_modulus,
+        poisson_ratio=args.poisson_ratio,
+        projection=args.stress_projection,
+        nodal_areas=contact_areas,
+        name="contact_pressure_stress",
+    )
+    if args.write_vtk:
+        nodal_force = fem.Function(Wz)
+        nodal_force.name = "nodal_contact_force"
+        potential_zone = fem.Function(Wz)
+        potential_zone.name = "potential_contact_zone"
+        initial_gap_field = fem.Function(Wz)
+        initial_gap_field.name = "initial_gap"
+        floor_height_field = fem.Function(Wz)
+        floor_height_field.name = "floor_height_projection"
 
-    with VTKFile(comm, str(vtk_path), "w") as vtk:
-        vtk.write_mesh(mesh, motion.states[0].time)
+    with ExitStack() as stack:
+        vtk = (
+            stack.enter_context(VTKFile(comm, str(vtk_path), "w"))
+            if args.write_vtk
+            else None
+        )
+        if vtk is not None:
+            vtk.write_mesh(mesh, motion.states[0].time)
         for step, state in enumerate(motion.states):
             full_gap = full_gaps[step]
-            geometric_gap = geometric_gaps[step]
-            floor_height = floor_heights[step]
+            geometric_gap = full_gap - inflation_values[contact_parent_dofs]
+            floor_height = full_points[:, 2] - geometric_gap
             full_force = previous_force.copy()
             full_clearance = full_gap.copy()
             print(
@@ -663,9 +754,14 @@ def _run_motion_history(
                 f"global primal={primal:.3e}, dual={dual:.3e}, "
                 f"complementarity={complementarity:.3e}"
             )
+            if _discard_memmap_pages(samples) and step == 0:
+                print(
+                    "released file-backed compliance pages before FE "
+                    "recovery/postprocessing"
+                )
 
-            rhs = pressure_rhs.copy()
-            displacement = A.createVecLeft()
+            rhs.set(0.0)
+            rhs.axpy(1.0, pressure_rhs)
             rhs.setValues(
                 contact_parent_dofs[candidate_indices],
                 full_force[candidate_indices],
@@ -676,42 +772,21 @@ def _run_motion_history(
             ksp.solve(rhs, displacement)
             step_final_seconds = perf_counter() - start
             final_solve_seconds += step_final_seconds
-            displacement_values = np.array(
-                displacement.getArray(readonly=True), copy=True
-            )
-            u_result = fem.Function(V)
-            u_result.name = "displacement"
+            displacement_values = displacement.getArray(readonly=True)
             u_result.x.array[:] = displacement_values
             u_result.x.scatter_forward()
-            contact_displacement = fem.Function(V)
-            contact_displacement.name = "contact_displacement"
             contact_displacement.x.array[:] = displacement_values - inflation_values
             contact_displacement.x.scatter_forward()
 
             start = perf_counter()
-            pressure_force = force_based_contact_pressure(
-                Wz,
+            _set_contact_scalar_field(
+                pressure_force,
                 contact_scalar_dofs,
-                full_force,
-                contact_areas,
-                name="contact_pressure_force_based",
+                full_force / contact_areas,
             )
-            pressure_stress = project_compressive_normal_stress(
-                contact_displacement,
-                Wz,
-                facet_tags,
-                CONTACT_TAG,
-                contact_scalar_dofs,
-                young_modulus=args.young_modulus,
-                poisson_ratio=args.poisson_ratio,
-                name="contact_pressure_stress",
-            )
-            pressure_force_values = np.array(
-                pressure_force.x.array[contact_scalar_dofs], copy=True
-            )
-            pressure_stress_values = np.array(
-                pressure_stress.x.array[contact_scalar_dofs], copy=True
-            )
+            pressure_stress = stress_projector.project()
+            pressure_force_values = pressure_force.x.array[contact_scalar_dofs]
+            pressure_stress_values = pressure_stress.x.array[contact_scalar_dofs]
             if not np.isclose(
                 float(pressure_force_values @ contact_areas),
                 float(full_force.sum()),
@@ -724,34 +799,35 @@ def _run_motion_history(
             step_pressure_seconds = perf_counter() - start
             pressure_seconds += step_pressure_seconds
 
-            nodal_force = _contact_scalar_field(
-                Wz, contact_scalar_dofs, full_force, "nodal_contact_force"
-            )
-            potential_values = np.zeros(full_unknowns)
-            potential_values[candidate_indices] = 1.0
-            potential_zone = _contact_scalar_field(
-                Wz, contact_scalar_dofs, potential_values, "potential_contact_zone"
-            )
-            initial_gap_field = _contact_scalar_field(
-                Wz, contact_scalar_dofs, geometric_gap, "initial_gap"
-            )
-            floor_height_field = _contact_scalar_field(
-                Wz, contact_scalar_dofs, floor_height, "floor_height_projection"
-            )
-            vtk.write_function(
-                [
-                    u_result,
-                    contact_displacement,
-                    nodal_force,
-                    potential_zone,
-                    initial_gap_field,
-                    floor_height_field,
-                    associated_area_field,
-                    pressure_stress,
-                    pressure_force,
-                ],
-                state.time,
-            )
+            if vtk is not None:
+                _set_contact_scalar_field(
+                    nodal_force, contact_scalar_dofs, full_force
+                )
+                potential_zone.x.array[:] = 0.0
+                potential_zone.x.array[
+                    contact_scalar_dofs[candidate_indices]
+                ] = 1.0
+                potential_zone.x.scatter_forward()
+                _set_contact_scalar_field(
+                    initial_gap_field, contact_scalar_dofs, geometric_gap
+                )
+                _set_contact_scalar_field(
+                    floor_height_field, contact_scalar_dofs, floor_height
+                )
+                vtk.write_function(
+                    [
+                        u_result,
+                        contact_displacement,
+                        nodal_force,
+                        potential_zone,
+                        initial_gap_field,
+                        floor_height_field,
+                        associated_area_field,
+                        pressure_stress,
+                        pressure_force,
+                    ],
+                    state.time,
+                )
 
             payload = {
                 "time": state.time,
@@ -785,9 +861,6 @@ def _run_motion_history(
                 "young_modulus": args.young_modulus,
                 "poisson_ratio": args.poisson_ratio,
                 "inflation_pressure": args.inflation_pressure,
-                "displacement": displacement_values,
-                "contact_displacement": displacement_values - inflation_values,
-                "inflation_displacement": inflation_values,
                 "status": result.status.value,
                 "iterations": result.iterations,
                 "residual": result.residual,
@@ -804,9 +877,24 @@ def _run_motion_history(
                 "factorization_count": 1,
                 "reference_vertical_shift": reference_vertical_shift,
                 "input_file": str(args.input_file or ""),
+                "stress_projection": args.stress_projection,
             }
+            if args.save_volume_fields:
+                payload.update(
+                    {
+                        "displacement": u_result.x.array,
+                        "contact_displacement": contact_displacement.x.array,
+                        "inflation_displacement": inflation_values,
+                    }
+                )
             np.savez(step_dir / f"contact_result_{step:05d}.npz", **payload)
-            last_payload = payload
+            if step == len(motion.states) - 1:
+                np.savez(output_dir / "contact_result.npz", **payload)
+                np.savez(
+                    output_dir
+                    / f"contact_result_{args.compliance_strategy}.npz",
+                    **payload,
+                )
             history["iterations"].append(result.iterations)
             history["potential_rounds"].append(solve_rounds)
             history["potential_contact_unknowns"].append(candidate_indices.size)
@@ -843,10 +931,6 @@ def _run_motion_history(
         }
     )
     np.savez(output_dir / "motion_history.npz", **history_payload)
-    np.savez(output_dir / "contact_result.npz", **last_payload)
-    np.savez(
-        output_dir / f"contact_result_{args.compliance_strategy}.npz", **last_payload
-    )
     print(
         f"motion solve reused one LU factorization for {len(motion.states)} states; "
         f"wrote results under {output_dir}"
@@ -1092,10 +1176,9 @@ def main() -> None:
     moving_floors = [
         MovingRegularFloor(floor, state, floor_pivot) for state in motion.states
     ]
-    floor_heights = np.stack(
-        [moving_floor.height_at(full_points[:, :2]) for moving_floor in moving_floors]
-    )
-    geometric_gaps = full_points[None, :, 2] - floor_heights
+    floor_heights = np.empty((len(moving_floors), full_points.shape[0]))
+    for step, moving_floor in enumerate(moving_floors):
+        floor_heights[step] = moving_floor.height_at(full_points[:, :2])
     floor_files = []
     for step, moving_floor in enumerate(moving_floors):
         floor_path = output_dir / "floor_motion" / f"floor_{step:05d}.vtu"
@@ -1152,6 +1235,11 @@ def main() -> None:
                 poisson_ratio=args.poisson_ratio,
                 boundary_condition_id=BOUNDARY_CONDITION_ID,
             )
+            if args.mmap_compliance:
+                samples = memory_map_compliance_samples(
+                    samples, output_dir / "compliance_samples.npy"
+                )
+                gc.collect()
             compliance_load_seconds = perf_counter() - start
             print(
                 "loaded reference compliance data from "
@@ -1173,7 +1261,7 @@ def main() -> None:
     if args.compliance_strategy == "hmatrix":
         if samples is None:
             start = perf_counter()
-            samples = sample_reference_transverse_compliance(
+            samples = sample_reference_normal_compliance(
                 A,
                 ksp,
                 ordering,
@@ -1188,7 +1276,7 @@ def main() -> None:
         print(
             f"contact unknowns={compliance_source.shape[0]}, "
             f"reference axial nodes={ordering.n_axial}, "
-            f"PETSc LU compliance solves={sampling_solves}"
+            f"normal H-matrices=1, PETSc LU auxiliary y/z solves={sampling_solves}"
         )
         print(f"maximum sector angle error={ordering.sector_angle_error:.3e} rad")
         print(f"dihedral reflection error={reflection_error:.3e}")
@@ -1210,10 +1298,35 @@ def main() -> None:
             "the factorized FE stiffness"
         )
 
+    if args.compliance_strategy == "hmatrix" and args.mmap_compliance:
+        old_source = compliance_source
+        samples = memory_map_compliance_samples(
+            samples, output_dir / "compliance_samples.npy"
+        )
+        compliance_source = DihedralComplianceEntrySource(samples)
+        compliance_source.reset_stats()
+        del old_source
+        gc.collect()
+        print(
+            "compliance samples memory-mapped from "
+            f"{Path(samples.filename).resolve()} "
+            f"({samples.nbytes / 2**30:.3f} GiB virtual data)"
+        )
+
     inflation_values = np.array(
         inflation_displacement.getArray(readonly=True), copy=True
     )
     if len(motion.states) > 1 and not args.sampling_only:
+        motion_full_gaps = floor_heights
+        np.subtract(
+            full_points[None, :, 2],
+            motion_full_gaps,
+            out=motion_full_gaps,
+        )
+        motion_full_gaps += inflation_values[
+            ordering.parent_z_dofs.ravel()
+        ][None, :]
+        del floor_heights
         _run_motion_history(
             args=args,
             comm=comm,
@@ -1229,8 +1342,7 @@ def main() -> None:
             output_dir=output_dir,
             motion=motion,
             floor_pivot=floor_pivot,
-            floor_heights=floor_heights,
-            geometric_gaps=geometric_gaps,
+            full_gaps=motion_full_gaps,
             inflation_values=inflation_values,
             compliance_source=compliance_source,
             samples=samples,
@@ -1240,7 +1352,7 @@ def main() -> None:
         return
 
     floor_height = floor_heights[0]
-    geometric_gap = geometric_gaps[0]
+    geometric_gap = full_points[:, 2] - floor_height
     full_gap = (
         geometric_gap
         + inflation_values[ordering.parent_z_dofs.ravel()]
@@ -1457,7 +1569,6 @@ def main() -> None:
     if args.compliance_strategy == "hmatrix":
         np.savez(
             output_dir / "compliance.npz",
-            samples=samples,
             points=full_points,
             gap=full_gap,
             candidate_indices=candidate_indices,
@@ -1470,7 +1581,7 @@ def main() -> None:
             floor_kind=args.floor_kind,
             floor_level=args.floor_level,
             floor_grid_size=args.floor_grid_size,
-            archive_format_version=5,
+            archive_format_version=7,
             boundary_condition_id=BOUNDARY_CONDITION_ID,
             young_modulus=args.young_modulus,
             poisson_ratio=args.poisson_ratio,
@@ -1485,6 +1596,7 @@ def main() -> None:
             h_dense_blocks=h_stats["dense"],
             source_queried_entries=query_stats["queried_entries"],
             reference_vertical_shift=reference_vertical_shift,
+            **_compliance_sample_archive_fields(samples, output_dir),
         )
     if args.sampling_only:
         print(f"saved reference compliance data to {output_dir / 'compliance.npz'}")
@@ -1566,6 +1678,8 @@ def main() -> None:
         contact_scalar_dofs,
         young_modulus=args.young_modulus,
         poisson_ratio=args.poisson_ratio,
+        projection=args.stress_projection,
+        nodal_areas=contact_areas,
         name="contact_pressure_stress",
     )
     pressure_force_values = np.array(
