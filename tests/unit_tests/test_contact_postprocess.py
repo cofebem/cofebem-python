@@ -1,9 +1,11 @@
 import numpy as np
 from mpi4py import MPI
+from petsc4py import PETSc
 
 from dolfinx import fem, mesh
 
 from cofebem.fenics.contact_postprocess import (
+    EquilibratedContactStressProjector,
     force_based_contact_pressure,
     project_compressive_normal_stress,
     surface_lumped_nodal_areas,
@@ -89,4 +91,53 @@ def test_stress_projection_recovers_uniform_compressive_pressure():
     )
     np.testing.assert_allclose(
         lumped_pressure.x.array[dofs], expected, rtol=1.0e-12
+    )
+
+
+def test_equilibrated_stress_recovery_uses_discrete_boundary_residual():
+    domain = mesh.create_unit_cube(
+        MPI.COMM_SELF, 2, 2, 2, cell_type=mesh.CellType.hexahedron
+    )
+    fdim = domain.topology.dim - 1
+    facets = np.sort(
+        mesh.locate_entities_boundary(
+            domain, fdim, lambda x: np.isclose(x[2], 0.0)
+        ).astype(np.int32)
+    )
+    tags = mesh.meshtags(
+        domain, fdim, facets, np.full(facets.size, 9, dtype=np.int32)
+    )
+    vector_space = fem.functionspace(domain, ("Lagrange", 1, (3,)))
+    scalar_space, scalar_to_vector = vector_space.sub(2).collapse()
+    dofs = np.asarray(
+        fem.locate_dofs_topological(scalar_space, fdim, facets),
+        dtype=np.int32,
+    )
+    parent_z = np.asarray(scalar_to_vector, dtype=np.int32)[dofs]
+    areas = surface_lumped_nodal_areas(scalar_space, tags, 9, dofs)
+
+    displacement = fem.Function(vector_space)
+    pressure_value = 3.5
+    displacement.x.array[parent_z] = pressure_value * areas
+    size = displacement.x.array.size
+    stiffness = PETSc.Mat().createAIJ([size, size], comm=domain.comm)
+    stiffness.setUp()
+    diagonal = PETSc.Vec().createSeq(size, comm=domain.comm)
+    diagonal.set(1.0)
+    stiffness.setDiagonal(diagonal)
+    stiffness.assemble()
+
+    pressure = EquilibratedContactStressProjector(
+        displacement,
+        stiffness,
+        scalar_space,
+        tags,
+        9,
+        dofs,
+        parent_z,
+        nodal_areas=areas,
+    ).project()
+
+    np.testing.assert_allclose(
+        pressure.x.array[dofs], pressure_value, rtol=1.0e-12
     )

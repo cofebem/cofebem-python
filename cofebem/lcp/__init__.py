@@ -29,6 +29,7 @@ from .problem import LCP
 from .preconditioners import (
     RestrictedProjectedPreconditioner,
     SectorSurfaceSpectralPreconditioner,
+    SurfaceAreaDiagonalPreconditioner,
 )
 from .result import LCPResult, LCPStatus
 from .solve import DEFAULT_METHOD, SOLVERS, solve
@@ -36,6 +37,7 @@ from .solve import DEFAULT_METHOD, SOLVERS, solve
 __all__ = [
     "LCP",
     "SectorSurfaceSpectralPreconditioner",
+    "SurfaceAreaDiagonalPreconditioner",
     "RestrictedProjectedPreconditioner",
     "LCPResult",
     "LCPStatus",

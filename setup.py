@@ -1,7 +1,31 @@
-from setuptools import setup, find_packages
+import os
+import sys
+
+from setuptools import Extension, setup, find_packages
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
+
+ext_modules = []
+if os.environ.get("COFEBEM_BUILD_PETSC_SCHUR") == "1":
+    try:
+        import petsc4py
+    except ImportError as exc:
+        raise RuntimeError(
+            "COFEBEM_BUILD_PETSC_SCHUR=1 requires petsc4py in the active "
+            "environment; use --no-build-isolation inside fenicsx-env"
+        ) from exc
+    petsc_dir = petsc4py.get_config().get("PETSC_DIR", sys.prefix)
+    ext_modules.append(
+        Extension(
+            "cofebem.fenics._petsc_schur",
+            sources=["cofebem/fenics/_petsc_schur.c"],
+            include_dirs=[petsc4py.get_include(), os.path.join(petsc_dir, "include")],
+            library_dirs=[os.path.join(petsc_dir, "lib")],
+            libraries=["petsc"],
+            runtime_library_dirs=[os.path.join(petsc_dir, "lib")],
+        )
+    )
 
 setup(
     name="cofebem",
@@ -28,4 +52,5 @@ setup(
         "scipy>=1.4.0",
         "matplotlib>=3.1.0",
     ],
+    ext_modules=ext_modules,
 )

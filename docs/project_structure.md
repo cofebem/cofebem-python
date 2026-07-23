@@ -72,7 +72,9 @@ The matching unit tests are under `tests/unit_tests/lcp`.
 - `linear_problem.py`: helper for a small linear-elastic system.
 - `dihedral_compliance.py`: reference-meridian y/z sampling with one reusable
   PETSc LU factorization, an entry source that rotates only requested global-z
-  compliance entries, and an exact factorized-FE compliance operator.
+  compliance entries, an open-patch local-symmetry entry source with direct-FE
+  validation, an exact factorized-FE compliance operator, and an exact
+  ACA-requested entry source that uses reciprocity without dihedral symmetry.
 - `contact_postprocess.py`: consistent contact nodal areas and surface
   projection of force-based and stress-based pressure fields.
 
@@ -132,12 +134,20 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
 - `cofebem/pipeline_fenicsx_minimal.py`: preferred minimal flat-contact
   reference.
 - `examples/tyre_contact.py`: arbitrary-normal adapter example.
-- `examples/tyre_dihedral_contact.py`: structured hex tyre, direct dihedral
-  H-matrix or flexibility-matrix-free compliance action, and spectrally
-  preconditioned operator PPCG solve; preferred tyre-symmetry reference. It
-  constrains only the two shortest mirrored disk-edge strips.
+- `examples/tyre_dihedral_contact.py`: structured uniform-hex or graded-tetra
+  tyre, direct dihedral H-matrix or flexibility-matrix-free compliance action,
+  and preconditioned operator PPCG solve; preferred tyre-symmetry reference.
+  It constrains only the two shortest mirrored disk-edge strips.
 - `examples/compare_tyre_compliance_strategies.py`: compare saved H-matrix and
   factorized-FE runs made with the same tyre configuration.
+- `examples/benchmark_tyre_contact_strategies.py`: isolated-process timing,
+  peak-memory, accuracy, LaTeX-table, and plotting study for the two H-matrix
+  constructions, factorized FE action, and MUMPS selected Schur action.
+- `examples/benchmark_tyre_contact_step_projection.py`: larger uniform-mesh
+  measurement and one/ten/100-step amortization plot for the three principal
+  normal-compliance strategies.
+- `examples/rebuild_potential_hmatrix.py`: candidate-only local-symmetry sample
+  closure, H-matrix rebuild, entry-equivalence audit, and storage plot.
 - `examples/generate_tyre_dihedral_mesh.py`: short editable wrapper exposing
   the axial and circumferential division counts.
 - `examples/hmat_benchmark.py`: dense compliance and H-matrix compression
@@ -153,6 +163,8 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
 - `README.md`: project entry point, installation, and current capability.
 - `docs/architecture.md`: formulation, data flow, component boundaries, and
   limitations.
+- `docs/graded_tyre_mesh.md`: the fine/transition/coarse angular layout and its
+  factorized-FE compatibility requirement.
 - `docs/fenicsx_workflow.md`: executable integration lifecycle.
 - `docs/hmatrix_symmetry.md`: direct H-matrix construction from the sampled
   tyre meridian and operator contact solve.
@@ -162,6 +174,12 @@ Examples range from useful reference cases to incomplete notebooks-in-code.
   full-surface certification, and candidate-zone expansion for tyre contact.
 - `docs/flexibility_matrix_free.md`: exact factorized-FE compliance action and
   the H-matrix versus matrix-free tyre benchmark.
+- `docs/linear_solver_backends.md`: iterative FE and MUMPS selected-Schur
+  actions, native build, memory guard, and comparison workflow.
+- `docs/tyre_strategy_benchmark.md`: reproducible three-mesh, one/ten-state
+  normal-contact benchmark and interpretation.
+- `docs/tyre_step_projection.md`: larger-mesh numerical setup/online timing
+  and projected repeated-contact cost.
 - `docs/rough_floor_contact.md`: rfgen floor construction, projected gap,
   pressure recovery, CLI, and output fields.
 - `docs/floor_motion.md`: floor kinematics, JSON load histories, factorization

@@ -8,9 +8,9 @@ version = "0.1.0"
 description = "Cofebem: boundary element method utilities and hierarchical matrices"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { identifier = "BSD-3-Clause" }
+license = { text = "BSD-3-Clause" }
 authors = [
-  { name = "Vladislav Yastrebov", email = "" },
+  { name = "Vladislav Yastrebov" },
   { name = "Yahya Boye", email = "yahyaboye1998@gmail.com" },
 ]
 keywords = ["contact","LCP","H-matrices","FEM","BEM","FEniCSx"]
@@ -21,18 +21,18 @@ classifiers = [
   "Operating System :: OS Independent",
   "Topic :: Scientific/Engineering",
 ]
+dependencies = [
+  "numpy>=1.22",
+  "scipy>=1.8",
+  "matplotlib==3.9.2",
+  "numba>=0.55",
+  "tqdm==4.67.0",
+  "rfgen>=0.1.8",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/cofebem/cofebem-python"
 "Source" = "https://github.com/cofebem/cofebem-python"
-
-[project.dependencies]
-numpy = ">=1.22"
-scipy = ">=1.8"
-matplotlib = "==3.9.2"
-numba = ">=0.55"
-tqdm = "==4.67.0"
-rfgen = ">=0.1.8"
 
 [project.optional-dependencies]
 dev = [

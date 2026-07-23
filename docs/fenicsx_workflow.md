@@ -176,17 +176,29 @@ solves per axial reference node, but stores only the three combinations `yy`,
 single scalar row with `np.roll`, as in the older z-axis annulus example, is not
 valid for this geometry.
 
+The alternative graded layout keeps an exact transfinite surface grid over
+the 60-degree road-facing zone, adds 30-degree transition zones, and coarsens
+the remaining 240 degrees in both circumferential and axial directions.
+DOLFINx 0.9 cannot assemble a connected mixed hex/tet function space through
+the supported Python path, so the graded volume uses conforming tetrahedra
+throughout. Since this mesh is not globally rotationally invariant, the exact
+choice is factorized-FE compliance. Alternatively, tag 204 restricts sampled
+open-patch reconstruction and the H-matrix to the regular fine surface; direct
+FE column checks quantify the resulting approximation, and final FE recovery
+certifies that contact has not escaped the tag. See
+[graded tyre mesh](graded_tyre_mesh.md).
+
 ```bash
 conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
   --axial-divisions 24 --circumferential-divisions 32 --regenerate
 ```
 
-The example infers the axial and circumferential density of an existing mesh
-from its tagged contact meridians. If the repository's default generated mesh
-does not match the requested divisions, it is regenerated automatically. For
-a custom `--mesh` path, pass `--regenerate` explicitly to authorize replacing
-the file. Both division counts must be even for the blocked structured mesh;
-an odd request such as 201 sectors is rejected before mesh loading.
+For a uniform mesh the example infers density from tagged contact meridians.
+For a graded tetrahedral mesh it validates the adjacent `.msh.json` generation
+manifest. If the repository's default mesh does not match, it is regenerated
+automatically. For a custom `--mesh` path, pass `--regenerate` explicitly to
+authorize replacing the file. Both requested division counts remain even so
+the fine transfinite surface is symmetric.
 
 To reuse a previously sampled reference meridian, pass its archive:
 
@@ -247,10 +259,13 @@ projected vertically and its bilinearly interpolated floor height defines
 `g0`. Both H-matrix and factorized-FE strategies consume the resulting gap
 without changing their compliance construction.
 
-The tyre output includes `contact_pressure_stress = -n.sigma(u_contact).n`
-after surface L2 projection and `contact_pressure_force_based = force/area`.
-The latter uses consistent CG1 nodal surface areas and exactly preserves the
-nodal-force resultant. The regular floor is written separately as VTU and NPZ.
+The tyre output includes a weakly equilibrated
+`contact_pressure_stress = -n.sigma(u_contact).n` and
+`contact_pressure_force_based = force/area`. The former recovers boundary
+traction from `A @ u_contact`, avoiding the oscillatory strong trace of
+piecewise element stress; the latter uses consistent CG1 nodal surface areas
+and exactly preserves the nodal-force resultant. The regular floor is written
+separately as VTU and NPZ.
 See [`rough_floor_contact.md`](rough_floor_contact.md) for commands,
 parameters, assumptions, and stress-recovery caveats.
 

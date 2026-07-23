@@ -24,26 +24,41 @@ which catches misspellings instead of silently using a default.
 
 | Section | Fields |
 | --- | --- |
-| `mesh` | `template`, `file`, `axial_divisions`, `circumferential_divisions`, `scale`, `regenerate` |
+| `mesh` | `template`, `file`, `axial_divisions`, `circumferential_divisions`, `circumferential_layout`, `coarsening_factor`, `scale`, `regenerate` |
 | `material` | `young_modulus`, `poisson_ratio`, `inflation_pressure` |
 | `floor` | `kind`, `level`, `grid_size`, `margin` |
 | `roughness` | `rms`, `hurst`, `k_low`, `k_high`, `seed`, `plateau`, `noise` |
 | `motion` | `time`, `interval_steps`, `indentation`, `floor_rotation_y_deg`, `floor_rotation_z_deg`, `floor_translation_x`, `floor_translation_y` |
 | `compliance` | `strategy`, `load`, `factor_solver_type`, `memory_map` |
+| `linear_solver` | `iterative_ksp_type`, `iterative_pc_type`, `relative_tolerance`, `absolute_tolerance`, `max_iterations`, `options_prefix`, `schur_factor_type`, `schur_max_memory_gib` |
 | `solver` | `contact_method`, `max_iterations`, `tolerance`, `pcg_preconditioner`, `pcg_zero_mode_factor`, `pcg_beta_method` |
-| `hmatrix` | `leaf_size`, `eta`, `tolerance`, `max_rank`, `split` |
+| `hmatrix` | `leaf_size`, `eta`, `tolerance`, `max_rank`, `split`, `local_symmetry_tag`, `local_symmetry_validation_columns`, `local_symmetry_tolerance`, `local_symmetry_strict` |
 | `potential_contact` | `warning_distance`, `halo`, `max_rounds`, `verification_tolerance` |
-| `execution` | `sampling_only`, `show_progress` |
-| `postprocessing` | `stress_projection`, `write_vtk`, `save_volume_fields` |
+| `execution` | `sampling_only`, `show_progress`, `output_directory` |
+| `postprocessing` | `stress_projection`, `stress_recovery`, `write_vtk`, `save_volume_fields` |
 
 The choices have the same meaning as their CLI equivalents:
 
 - `floor.kind`: `flat` or `rough`;
-- `compliance.strategy`: `hmatrix` or `fe_matrix_free`;
+- `mesh.circumferential_layout`: `uniform` or `graded`;
+- `compliance.strategy`: `hmatrix`, `hmatrix_full`, `fe_matrix_free`,
+  `fe_iterative`, or `mumps_schur`;
 - `solver.contact_method`: `ppcg`, `ccg_v2`, or `ccg`;
 - `solver.pcg_preconditioner`: `spectral` or `none`;
 - `solver.pcg_beta_method`: `pr_plus` or `fletcher_reeves`;
-- `hmatrix.split`: `pca` or `kd`.
+- `hmatrix.split`: `pca` or `kd`;
+- `postprocessing.stress_recovery`: `equilibrated` (recommended),
+  `nodal_average`, or `raw`.
+
+For `circumferential_layout: "graded"`, the circumferential division count
+applies to the 60-degree road-facing fine zone. The two 30-degree transition
+zones and 240-degree coarse zone are generated automatically, bounded by
+`coarsening_factor`. The graded volume is tetrahedral, preserves the requested
+fine surface counts, and coarsens axially outside that sector. It can use exact
+`compliance.strategy: "fe_matrix_free"`, or the approximate local H-matrix
+path with `hmatrix.local_symmetry_tag: 204`. The latter validates sampled
+columns against direct FE solves and requires the potential contact zone to
+remain inside the tagged patch. See [graded tyre mesh](graded_tyre_mesh.md).
 
 Set `compliance.load` to `null` to sample compliance in the current run. Set it
 to an NPZ path to reuse reference-meridian samples. `factor_solver_type` may be
@@ -58,6 +73,19 @@ legacy archive converts it automatically. There is only one contact H-matrix,
 for normal compliance. For the 300 by 700 case, the raw sample data decrease
 from about 1.89 GiB to 1.42 GiB, saving approximately 484 MiB.
 
+`hmatrix_full` is the H-matrix control path without dihedral reconstruction.
+It obtains every ACA-requested normal-compliance entry from the factorized FE
+problem and uses only elastic reciprocity for symmetric storage. It therefore
+does not accept a dihedral compliance archive. This exact-sampling path is
+useful for validation and for meshes without rotational symmetry, but may need
+many more FE solves than `hmatrix` as the potential contact set grows.
+
+`linear_solver` controls the two experimental operator backends. The iterative
+fields configure the inner PETSc KSP, while the Schur fields select MUMPS
+LU/Cholesky and a conservative dense-memory limit. The optional native build,
+fixed contact-set rule, and validation checks are documented in
+[`linear_solver_backends.md`](linear_solver_backends.md).
+
 ## Large-case postprocessing
 
 The recommended low-memory settings are:
@@ -69,6 +97,7 @@ The recommended low-memory settings are:
   },
   "postprocessing": {
     "stress_projection": "lumped",
+    "stress_recovery": "equilibrated",
     "write_vtk": true,
     "save_volume_fields": false
   }
@@ -88,9 +117,9 @@ forces, clearances, and the two contact-pressure arrays are required.
 
 ## Paths
 
-`mesh.template`, `mesh.file`, and `compliance.load` are resolved relative to
-the input JSON, not the shell working directory. Thus the repository example
-uses:
+`mesh.template`, `mesh.file`, `compliance.load`, and
+`execution.output_directory` are resolved relative to the input JSON, not the
+shell working directory. Thus the repository example uses:
 
 ```json
 {

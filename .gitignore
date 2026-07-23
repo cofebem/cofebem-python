@@ -27,3 +27,6 @@ dist/
 *.tmp
 *.png 
 *.csv
+cofebem/*.pdf
+geo_files/Zmaster.msg
+geo_files/improved_mesh.svg

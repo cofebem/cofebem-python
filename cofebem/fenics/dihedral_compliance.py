@@ -11,7 +11,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, process_time
 
 import numpy as np
 from mpi4py import MPI
@@ -28,7 +28,9 @@ class SectorOrdering:
     parent_y_dofs: np.ndarray
     parent_z_dofs: np.ndarray
     points: np.ndarray
+    sector_angles: np.ndarray
     sector_angle_error: float
+    structured: bool = True
 
     @property
     def n_sectors(self) -> int:
@@ -37,6 +39,52 @@ class SectorOrdering:
     @property
     def n_axial(self) -> int:
         return int(self.scalar_dofs.shape[1])
+
+
+def order_unstructured_contact(
+    points: np.ndarray,
+    scalar_dofs: np.ndarray,
+    parent_y_dofs: np.ndarray,
+    parent_z_dofs: np.ndarray,
+    *,
+    axis_yz: tuple[float, float] = (0.0, 0.0),
+) -> SectorOrdering:
+    """Create deterministic flat ordering for an unstructured contact surface.
+
+    The singleton leading dimension keeps the established force/DOF APIs
+    compatible. It is not a physical circumferential sector and therefore must
+    not be used by dihedral sampling or sector-spectral preconditioning.
+    """
+    points = np.asarray(points, dtype=float)
+    scalar_dofs = np.asarray(scalar_dofs, dtype=np.int32).reshape(-1)
+    parent_y_dofs = np.asarray(parent_y_dofs, dtype=np.int32).reshape(-1)
+    parent_z_dofs = np.asarray(parent_z_dofs, dtype=np.int32).reshape(-1)
+    n = len(points)
+    if points.shape != (n, 3) or n == 0:
+        raise ValueError("points must have nonzero shape (n, 3)")
+    if any(
+        values.shape != (n,)
+        for values in (scalar_dofs, parent_y_dofs, parent_z_dofs)
+    ):
+        raise ValueError("all DOF arrays must have shape (n,)")
+    if not np.all(np.isfinite(points)):
+        raise ValueError("points contain NaN or infinite values")
+    y0, z0 = axis_yz
+    angles = np.mod(
+        np.arctan2(points[:, 2] - z0, points[:, 1] - y0),
+        2.0 * np.pi,
+    )
+    radius = np.hypot(points[:, 1] - y0, points[:, 2] - z0)
+    order = np.lexsort((radius, points[:, 0], angles))
+    return SectorOrdering(
+        scalar_dofs=scalar_dofs[order][None, :],
+        parent_y_dofs=parent_y_dofs[order][None, :],
+        parent_z_dofs=parent_z_dofs[order][None, :],
+        points=points[order][None, :, :],
+        sector_angles=np.empty(0, dtype=float),
+        sector_angle_error=0.0,
+        structured=False,
+    )
 
 
 class FactorizedComplianceOperator:
@@ -99,6 +147,9 @@ class FactorizedComplianceOperator:
         self.cache_hits = 0
         self.zero_bypasses = 0
         self.solve_seconds = 0.0
+        self.solve_cpu_seconds = 0.0
+        self.linear_iterations = 0
+        self.maximum_linear_iterations = 0
 
     def _solve(self, forces: np.ndarray) -> None:
         if self._last_forces is not None and np.array_equal(
@@ -121,6 +172,11 @@ class FactorizedComplianceOperator:
             self.ksp.solve(self._rhs, self._displacement)
             self.solve_seconds += perf_counter() - start
             self.linear_solves += 1
+            iterations = int(self.ksp.getIterationNumber())
+            self.linear_iterations += iterations
+            self.maximum_linear_iterations = max(
+                self.maximum_linear_iterations, iterations
+            )
             if int(self.ksp.getConvergedReason()) <= 0:
                 raise RuntimeError(
                     "Factorized FE compliance solve failed with PETSc reason "
@@ -167,6 +223,156 @@ class FactorizedComplianceOperator:
             "zero_bypasses": self.zero_bypasses,
             "solve_seconds": self.solve_seconds,
         }
+
+
+class FactorizedComplianceEntrySource(MatrixEntrySource):
+    """Exact symmetric compliance entries from cached full-FE back-solves.
+
+    Unlike the dihedral source, this implementation assumes no geometric
+    symmetry.  It uses only elastic reciprocity: for each requested Cartesian
+    block it solves whichever uncached set of source rows or columns is
+    smaller, and caches the resulting contact-sized compliance columns.
+    """
+
+    def __init__(
+        self,
+        A: PETSc.Mat,
+        ksp: PETSc.KSP,
+        contact_dofs: np.ndarray,
+    ) -> None:
+        if A.comm.size != 1:
+            raise NotImplementedError(
+                "FactorizedComplianceEntrySource is currently serial"
+            )
+        dofs = np.asarray(contact_dofs, dtype=np.int32).reshape(-1)
+        if dofs.size == 0 or np.unique(dofs).size != dofs.size:
+            raise ValueError("contact_dofs must be non-empty and unique")
+        if np.any(dofs < 0) or np.any(dofs >= A.getSize()[0]):
+            raise IndexError("contact DOF outside the FE matrix")
+        self.A = A
+        self.ksp = ksp
+        self.contact_dofs = dofs.copy()
+        self.shape = (dofs.size, dofs.size)
+        self._rhs = A.createVecRight()
+        self._displacement = A.createVecLeft()
+        self._columns: dict[int, np.ndarray] = {}
+        self.reset_stats()
+
+    def reset_stats(self) -> None:
+        """Reset query/solve counters while retaining cached FE columns."""
+        self.query_calls = 0
+        self.queried_entries = 0
+        self.largest_query = (0, 0)
+        self.linear_solves = 0
+        self.cache_hits = 0
+        self.solve_seconds = 0.0
+        self.solve_cpu_seconds = 0.0
+
+    def _solve_column(self, source: int) -> None:
+        if source in self._columns:
+            self.cache_hits += 1
+            return
+        self._rhs.set(0.0)
+        self._rhs.setValue(
+            int(self.contact_dofs[source]),
+            1.0,
+            addv=PETSc.InsertMode.INSERT_VALUES,
+        )
+        self._rhs.assemble()
+        start = perf_counter()
+        start_cpu = process_time()
+        self.ksp.solve(self._rhs, self._displacement)
+        self.solve_seconds += perf_counter() - start
+        self.solve_cpu_seconds += process_time() - start_cpu
+        self.linear_solves += 1
+        if int(self.ksp.getConvergedReason()) <= 0:
+            raise RuntimeError(
+                "Full-FE compliance column solve failed with PETSc reason "
+                f"{self.ksp.getConvergedReason()}"
+            )
+        values = self._displacement.getArray(readonly=True)
+        self._columns[source] = np.array(
+            values[self.contact_dofs], dtype=np.float64, copy=True
+        )
+
+    def get_block(
+        self, row_indices: np.ndarray, column_indices: np.ndarray
+    ) -> np.ndarray:
+        rows = np.asarray(row_indices, dtype=np.int64).reshape(-1)
+        columns = np.asarray(column_indices, dtype=np.int64).reshape(-1)
+        if np.any(rows < 0) or np.any(rows >= self.shape[0]):
+            raise IndexError("row index outside compliance source")
+        if np.any(columns < 0) or np.any(columns >= self.shape[1]):
+            raise IndexError("column index outside compliance source")
+        self.query_calls += 1
+        self.queried_entries += rows.size * columns.size
+        self.largest_query = max(
+            self.largest_query, (rows.size, columns.size), key=lambda x: x[0] * x[1]
+        )
+        missing_columns = sum(int(index) not in self._columns for index in columns)
+        missing_rows = sum(int(index) not in self._columns for index in rows)
+        if missing_columns <= missing_rows:
+            for source in np.unique(columns):
+                self._solve_column(int(source))
+            return np.column_stack(
+                [self._columns[int(source)][rows] for source in columns]
+            )
+        for source in np.unique(rows):
+            self._solve_column(int(source))
+        return np.row_stack(
+            [self._columns[int(source)][columns] for source in rows]
+        )
+
+    def stats(self) -> dict[str, int | float | tuple[int, int]]:
+        return {
+            "query_calls": self.query_calls,
+            "queried_entries": self.queried_entries,
+            "largest_query": self.largest_query,
+            "linear_solves": self.linear_solves,
+            "cached_columns": len(self._columns),
+            "cache_hits": self.cache_hits,
+            "solve_seconds": self.solve_seconds,
+            "solve_cpu_seconds": self.solve_cpu_seconds,
+        }
+
+
+class IterativeComplianceOperator(FactorizedComplianceOperator):
+    """Compliance action backed by a strictly checked iterative FE solve."""
+
+    def stats(self) -> dict[str, int | float]:
+        values = super().stats()
+        values.update(
+            {
+                "linear_iterations": self.linear_iterations,
+                "maximum_linear_iterations": self.maximum_linear_iterations,
+            }
+        )
+        return values
+
+
+def probe_spd_operator(
+    operator,
+    *,
+    seed: int = 1729,
+) -> dict[str, float]:
+    """Probe reciprocity and positive energy without materializing an operator."""
+    rows, columns = operator.shape
+    if rows != columns or not getattr(operator, "symmetric", False):
+        raise ValueError("operator must declare a square symmetric action")
+    rng = np.random.default_rng(seed)
+    x = rng.standard_normal(columns)
+    y = rng.standard_normal(columns)
+    action_x = np.asarray(operator @ x, dtype=float)
+    action_y = np.asarray(operator @ y, dtype=float)
+    xy = float(x @ action_y)
+    yx = float(y @ action_x)
+    reciprocity = abs(xy - yx) / max(abs(xy), abs(yx), np.finfo(float).tiny)
+    rayleigh_x = float(x @ action_x / (x @ x))
+    rayleigh_y = float(y @ action_y / (y @ y))
+    return {
+        "reciprocity_error": reciprocity,
+        "minimum_probed_rayleigh": min(rayleigh_x, rayleigh_y),
+    }
 
 
 class DihedralComplianceEntrySource(MatrixEntrySource):
@@ -318,12 +524,310 @@ class DihedralComplianceEntrySource(MatrixEntrySource):
         self.largest_query = (0, 0)
 
 
+class LocalDihedralComplianceEntrySource(DihedralComplianceEntrySource):
+    """Symmetry reconstruction restricted to an open regular angular patch.
+
+    Unlike :class:`DihedralComplianceEntrySource`, this source does not wrap
+    sector offsets around a full circle.  It assumes that translating a
+    source/target pair between the equally spaced meridians of the tagged
+    patch is a useful local approximation.  Entries below the diagonal are
+    obtained by elastic reciprocity, so the resulting scalar operator is
+    exactly symmetric even though the surrounding FE mesh need not possess
+    the same rotational symmetry.
+
+    This is an approximation whenever the structure outside the tagged patch
+    is not rotationally invariant.  Call
+    :func:`validate_local_dihedral_compliance` before using it in an SPD-only
+    contact solver.
+    """
+
+    def __init__(self, samples: np.ndarray, *, sector_step: float):
+        super().__init__(samples)
+        if self.n_sectors < 2:
+            raise ValueError("a local symmetry patch needs at least two meridians")
+        if not np.isfinite(sector_step) or sector_step <= 0.0:
+            raise ValueError("sector_step must be finite and positive")
+        self.sector_step = float(sector_step)
+
+    def _forward_evaluate(
+        self, target: np.ndarray, source: np.ndarray
+    ) -> np.ndarray:
+        """Evaluate pairs with target sector not before source sector."""
+        target_sector = target // self.n_axial
+        target_axial = target % self.n_axial
+        source_sector = source // self.n_axial
+        source_axial = source % self.n_axial
+        delta = target_sector - source_sector
+        angle = source_sector * self.sector_step
+        qy = np.sin(angle)
+        qz = np.cos(angle)
+        if self.compact_normal:
+            return (
+                qy**2 * self.samples[0, source_axial, delta, target_axial]
+                + qy
+                * qz
+                * self.samples[1, source_axial, delta, target_axial]
+                + qz**2 * self.samples[2, source_axial, delta, target_axial]
+            )
+
+        values = np.zeros(np.broadcast_shapes(target.shape, source.shape), dtype=float)
+        q = (qy, qz)
+        for force_component in range(2):
+            for response_component in range(2):
+                values += (
+                    q[force_component]
+                    * self.samples[
+                        force_component,
+                        source_axial,
+                        response_component,
+                        delta,
+                        target_axial,
+                    ]
+                    * q[response_component]
+                )
+        return values
+
+    def _evaluate(self, target: np.ndarray, source: np.ndarray) -> np.ndarray:
+        target, source = np.broadcast_arrays(
+            np.asarray(target, dtype=np.int64),
+            np.asarray(source, dtype=np.int64),
+        )
+        target_sector = target // self.n_axial
+        source_sector = source // self.n_axial
+        forward = target_sector >= source_sector
+        values = np.empty(target.shape, dtype=float)
+        if np.any(forward):
+            values[forward] = self._forward_evaluate(
+                target[forward], source[forward]
+            )
+        if np.any(~forward):
+            # Maxwell-Betti reciprocity supplies the unsampled orientation.
+            values[~forward] = self._forward_evaluate(
+                source[~forward], target[~forward]
+            )
+        return values
+
+
+class RestrictedLocalDihedralComplianceEntrySource(MatrixEntrySource):
+    """Candidate-only local-symmetry compliance sample closure.
+
+    The source stores only the axial indices and non-negative sector offsets
+    needed by a fixed potential-contact set. Its matrix ordering is exactly
+    the ordering of ``candidate_indices``; no full-patch principal-submatrix
+    wrapper is required.
+    """
+
+    def __init__(
+        self,
+        samples: np.ndarray,
+        candidate_indices: np.ndarray,
+        *,
+        full_n_axial: int,
+        axial_indices: np.ndarray,
+        sector_deltas: np.ndarray,
+        sector_step: float,
+    ) -> None:
+        values = np.asarray(samples)
+        candidates = np.asarray(candidate_indices, dtype=np.int64).reshape(-1)
+        axial = np.asarray(axial_indices, dtype=np.int64).reshape(-1)
+        deltas = np.asarray(sector_deltas, dtype=np.int64).reshape(-1)
+        if full_n_axial <= 0:
+            raise ValueError("full_n_axial must be positive")
+        if candidates.size == 0 or np.unique(candidates).size != candidates.size:
+            raise ValueError("candidate_indices must be non-empty and unique")
+        if axial.size == 0 or np.any(np.diff(axial) <= 0):
+            raise ValueError("axial_indices must be sorted and unique")
+        if deltas.size == 0 or deltas[0] != 0 or np.any(np.diff(deltas) <= 0):
+            raise ValueError("sector_deltas must be sorted, unique, and include zero")
+        if np.any(axial < 0) or np.any(axial >= full_n_axial):
+            raise IndexError("axial index outside the full meridian")
+        if np.any(candidates < 0):
+            raise IndexError("candidate index must be non-negative")
+        if values.shape != (3, axial.size, deltas.size, axial.size):
+            raise ValueError(
+                "samples must have shape "
+                f"(3, {axial.size}, {deltas.size}, {axial.size})"
+            )
+        if not np.isfinite(sector_step) or sector_step <= 0.0:
+            raise ValueError("sector_step must be finite and positive")
+
+        candidate_axial = candidates % full_n_axial
+        axial_lookup = np.full(full_n_axial, -1, dtype=np.int64)
+        axial_lookup[axial] = np.arange(axial.size)
+        if np.any(axial_lookup[candidate_axial] < 0):
+            raise ValueError("candidate axial index is absent from sampled closure")
+        delta_lookup = np.full(int(deltas[-1]) + 1, -1, dtype=np.int64)
+        delta_lookup[deltas] = np.arange(deltas.size)
+
+        self.samples = values
+        self.candidate_indices = candidates.copy()
+        self.full_n_axial = int(full_n_axial)
+        self.axial_indices = axial.copy()
+        self.sector_deltas = deltas.copy()
+        self.sector_step = float(sector_step)
+        self._candidate_sector = candidates // full_n_axial
+        self._candidate_axial = candidate_axial
+        self._axial_lookup = axial_lookup
+        self._delta_lookup = delta_lookup
+        self.shape = (candidates.size, candidates.size)
+        self.reset_stats()
+
+    def _forward_evaluate(
+        self, target: np.ndarray, source: np.ndarray
+    ) -> np.ndarray:
+        target_sector = self._candidate_sector[target]
+        source_sector = self._candidate_sector[source]
+        delta = target_sector - source_sector
+        if np.any(delta < 0) or np.any(delta >= self._delta_lookup.size):
+            raise IndexError("sector offset outside restricted sample closure")
+        delta_local = self._delta_lookup[delta]
+        if np.any(delta_local < 0):
+            raise IndexError("sector offset was not sampled")
+        source_axial = self._axial_lookup[self._candidate_axial[source]]
+        target_axial = self._axial_lookup[self._candidate_axial[target]]
+        angle = source_sector * self.sector_step
+        qy = np.sin(angle)
+        qz = np.cos(angle)
+        return (
+            qy**2 * self.samples[0, source_axial, delta_local, target_axial]
+            + qy
+            * qz
+            * self.samples[1, source_axial, delta_local, target_axial]
+            + qz**2 * self.samples[2, source_axial, delta_local, target_axial]
+        )
+
+    def _evaluate(self, target: np.ndarray, source: np.ndarray) -> np.ndarray:
+        target, source = np.broadcast_arrays(
+            np.asarray(target, dtype=np.int64),
+            np.asarray(source, dtype=np.int64),
+        )
+        target_sector = self._candidate_sector[target]
+        source_sector = self._candidate_sector[source]
+        forward = target_sector >= source_sector
+        values = np.empty(target.shape, dtype=float)
+        if np.any(forward):
+            values[forward] = self._forward_evaluate(
+                target[forward], source[forward]
+            )
+        if np.any(~forward):
+            values[~forward] = self._forward_evaluate(
+                source[~forward], target[~forward]
+            )
+        return values
+
+    def get_block(
+        self, row_indices: np.ndarray, column_indices: np.ndarray
+    ) -> np.ndarray:
+        rows = np.asarray(row_indices, dtype=np.int64).reshape(-1)
+        columns = np.asarray(column_indices, dtype=np.int64).reshape(-1)
+        if np.any(rows < 0) or np.any(rows >= self.shape[0]):
+            raise IndexError("row index outside restricted compliance source")
+        if np.any(columns < 0) or np.any(columns >= self.shape[1]):
+            raise IndexError("column index outside restricted compliance source")
+        self.query_calls += 1
+        self.queried_entries += int(rows.size * columns.size)
+        if rows.size * columns.size > self.largest_query[0] * self.largest_query[1]:
+            self.largest_query = (int(rows.size), int(columns.size))
+        return self._evaluate(rows[:, None], columns[None, :])
+
+    def stats(self) -> dict[str, int | tuple[int, int]]:
+        return {
+            "query_calls": self.query_calls,
+            "queried_entries": self.queried_entries,
+            "largest_query": self.largest_query,
+            "sampled_axial_nodes": int(self.axial_indices.size),
+            "sampled_sector_deltas": int(self.sector_deltas.size),
+            "sampled_entries": int(self.samples.size),
+        }
+
+    def reset_stats(self) -> None:
+        self.query_calls = 0
+        self.queried_entries = 0
+        self.largest_query = (0, 0)
+
+
+def restrict_local_dihedral_compliance_samples(
+    samples: np.ndarray,
+    candidate_indices: np.ndarray,
+    *,
+    sector_step: float,
+) -> RestrictedLocalDihedralComplianceEntrySource:
+    """Copy the minimal rectangular sample closure for fixed candidates."""
+    full = compact_normal_compliance_samples(samples)
+    n_axial = int(full.shape[1])
+    candidates = np.asarray(candidate_indices, dtype=np.int64).reshape(-1)
+    if candidates.size == 0 or np.any(candidates >= full.shape[2] * n_axial):
+        raise IndexError("candidate index outside full local-symmetry patch")
+    sectors = np.unique(candidates // n_axial)
+    axial = np.unique(candidates % n_axial)
+    deltas = np.unique(np.abs(sectors[:, None] - sectors[None, :]))
+    restricted = full[np.ix_(np.arange(3), axial, deltas, axial)].copy()
+    return RestrictedLocalDihedralComplianceEntrySource(
+        restricted,
+        candidates,
+        full_n_axial=n_axial,
+        axial_indices=axial,
+        sector_deltas=deltas,
+        sector_step=sector_step,
+    )
+
+def validate_local_dihedral_compliance(
+    A: PETSc.Mat,
+    ksp: PETSc.KSP,
+    ordering: SectorOrdering,
+    source: LocalDihedralComplianceEntrySource,
+    *,
+    sample_columns: int = 4,
+) -> dict[str, float | int]:
+    """Compare selected reconstructed columns with direct FE back-solves."""
+    if sample_columns <= 0:
+        raise ValueError("sample_columns must be positive")
+    if source.shape[0] != ordering.parent_z_dofs.size:
+        raise ValueError("source and ordering sizes differ")
+    count = min(int(sample_columns), source.shape[1])
+    columns = np.unique(
+        np.linspace(0, source.shape[1] - 1, count, dtype=np.int64)
+    )
+    exact_operator = FactorizedComplianceOperator(
+        A,
+        ksp,
+        ordering.parent_z_dofs.ravel(),
+    )
+    rows = np.arange(source.shape[0], dtype=np.int64)
+    error_sq = 0.0
+    norm_sq = 0.0
+    maximum_relative_column_error = 0.0
+    for column in columns:
+        unit = np.zeros(source.shape[1], dtype=float)
+        unit[column] = 1.0
+        exact = exact_operator @ unit
+        approximate = source.get_block(rows, np.array([column]))[:, 0]
+        error = np.linalg.norm(approximate - exact)
+        norm = np.linalg.norm(exact)
+        relative = float(error / max(norm, np.finfo(float).tiny))
+        maximum_relative_column_error = max(
+            maximum_relative_column_error, relative
+        )
+        error_sq += float(error**2)
+        norm_sq += float(norm**2)
+    return {
+        "sample_columns": int(columns.size),
+        "relative_frobenius_estimate": float(
+            np.sqrt(error_sq / max(norm_sq, np.finfo(float).tiny))
+        ),
+        "maximum_relative_column_error": maximum_relative_column_error,
+        "direct_fe_solves": int(exact_operator.linear_solves),
+    }
+
+
 def load_dihedral_compliance_archive(
     path: str | Path,
     points: np.ndarray,
     *,
     n_axial: int,
     n_sectors: int,
+    circumferential_divisions: int | None = None,
+    local_symmetry_tag: int | None = None,
     young_modulus: float | None = None,
     poisson_ratio: float | None = None,
     boundary_condition_id: str | None = None,
@@ -384,6 +888,7 @@ def load_dihedral_compliance_archive(
                 "young_modulus",
                 "poisson_ratio",
                 "boundary_condition_id",
+                "local_symmetry_tag",
             ):
                 if name in archive.files:
                     value = np.asarray(archive[name])
@@ -434,13 +939,29 @@ def load_dihedral_compliance_archive(
 
     expected_divisions = {
         "axial_divisions": n_axial - 1,
-        "circumferential_divisions": n_sectors,
+        "circumferential_divisions": (
+            n_sectors
+            if circumferential_divisions is None
+            else circumferential_divisions
+        ),
     }
     for name, expected in expected_divisions.items():
         if name in metadata and int(metadata[name]) != expected:
             raise ValueError(
                 f"Loaded compliance {name}={metadata[name]} does not match "
                 f"the current value {expected}"
+            )
+
+    if local_symmetry_tag is not None:
+        if "local_symmetry_tag" not in metadata:
+            raise ValueError(
+                "Loaded compliance archive has no local_symmetry_tag metadata"
+            )
+        if int(metadata["local_symmetry_tag"]) != int(local_symmetry_tag):
+            raise ValueError(
+                "Loaded compliance local_symmetry_tag="
+                f"{metadata['local_symmetry_tag']} does not match the current "
+                f"value {local_symmetry_tag}"
             )
 
     material = {
@@ -583,17 +1104,16 @@ def memory_map_compliance_samples(
     return mapped
 
 
-def infer_regular_sector_shape(
+def infer_meridian_shape(
     points: np.ndarray,
     *,
     axis_yz: tuple[float, float] = (0.0, 0.0),
     angle_tol: float = 1.0e-8,
-) -> tuple[int, int]:
-    """Infer ``(n_sectors, nodes_per_sector)`` from a revolved point set.
+) -> tuple[np.ndarray, int]:
+    """Infer sorted meridian angles and the common nodes-per-meridian count.
 
-    All points must lie on equally spaced meridians about the global x axis.
-    The points need not be ordered, but every meridian must contain the same
-    number of points.
+    The points need not be ordered or equally spaced, but every meridian must
+    contain the same number of points.
     """
     points = np.asarray(points, dtype=float)
     if points.ndim != 2 or points.shape[1] != 3 or len(points) == 0:
@@ -625,7 +1145,7 @@ def infer_regular_sector_shape(
     counts = np.array([len(cluster) for cluster in clusters], dtype=int)
     if np.any(counts != counts[0]):
         raise ValueError(
-            "cannot infer regular sectors because meridian point counts differ: "
+            "cannot infer meridians because meridian point counts differ: "
             f"{sorted(np.unique(counts).tolist())}"
         )
 
@@ -633,9 +1153,22 @@ def infer_regular_sector_shape(
         np.array([np.mean(cluster) for cluster in clusters]), 2.0 * np.pi
     )
     centers.sort()
-    n_sectors = len(centers)
-    if n_sectors < 2:
+    if len(centers) < 2:
         raise ValueError("at least two meridians are required")
+    return centers, int(counts[0])
+
+
+def infer_regular_sector_shape(
+    points: np.ndarray,
+    *,
+    axis_yz: tuple[float, float] = (0.0, 0.0),
+    angle_tol: float = 1.0e-8,
+) -> tuple[int, int]:
+    """Infer equal sector and axial-node counts from a revolved point set."""
+    centers, nodes_per_sector = infer_meridian_shape(
+        points, axis_yz=axis_yz, angle_tol=angle_tol
+    )
+    n_sectors = len(centers)
     gaps = np.diff(np.concatenate([centers, centers[:1] + 2.0 * np.pi]))
     expected_gap = 2.0 * np.pi / n_sectors
     if not np.allclose(gaps, expected_gap, rtol=0.0, atol=2.0 * angle_tol):
@@ -643,7 +1176,7 @@ def infer_regular_sector_shape(
             "point meridians are not equally spaced: maximum sector-gap error is "
             f"{np.max(np.abs(gaps - expected_gap)):.3e} rad"
         )
-    return n_sectors, int(counts[0])
+    return n_sectors, nodes_per_sector
 
 
 def potential_contact_indices(
@@ -717,18 +1250,23 @@ def restricted_source_clearance(
     return clearance
 
 
-def order_contact_sectors(
+def order_contact_meridians(
     points: np.ndarray,
     scalar_dofs: np.ndarray,
     parent_y_dofs: np.ndarray,
     parent_z_dofs: np.ndarray,
-    n_sectors: int,
+    sector_angles: np.ndarray,
     *,
     axis_yz: tuple[float, float] = (0.0, 0.0),
     angle_tol: float = 1.0e-8,
-    geometry_tol: float = 1.0e-9,
+    geometry_tol: float | None = 1.0e-9,
 ) -> SectorOrdering:
-    """Group a regular surface of revolution into equal angular sectors."""
+    """Group a surface of revolution on prescribed angular meridians.
+
+    Set ``geometry_tol=None`` for a locally structured but geometrically
+    approximate patch whose axial/radial rows are paired only by sorted axial
+    index. The regular full-circle path should retain the strict default.
+    """
     points = np.asarray(points, dtype=float)
     scalar_dofs = np.asarray(scalar_dofs, dtype=np.int32)
     parent_y_dofs = np.asarray(parent_y_dofs, dtype=np.int32)
@@ -738,19 +1276,43 @@ def order_contact_sectors(
         raise ValueError("points must have shape (n, 3)")
     if any(array.shape != (n,) for array in (scalar_dofs, parent_y_dofs, parent_z_dofs)):
         raise ValueError("all DOF arrays must have shape (n,)")
-    if n_sectors < 2:
-        raise ValueError("n_sectors must be >= 2")
+    expected_angles = np.mod(
+        np.asarray(sector_angles, dtype=float).reshape(-1), 2.0 * np.pi
+    )
+    if expected_angles.size < 2 or not np.all(np.isfinite(expected_angles)):
+        raise ValueError("sector_angles must contain at least two finite angles")
+    expected_angles.sort()
+    circular_gaps = np.diff(
+        np.concatenate([expected_angles, expected_angles[:1] + 2.0 * np.pi])
+    )
+    if np.any(circular_gaps <= 2.0 * angle_tol):
+        raise ValueError("sector_angles must be unique")
+    n_sectors = expected_angles.size
 
     y0, z0 = axis_yz
     angles = np.mod(np.arctan2(points[:, 2] - z0, points[:, 1] - y0), 2.0 * np.pi)
-    dtheta = 2.0 * np.pi / n_sectors
-    sectors = np.rint(angles / dtheta).astype(int) % n_sectors
-    expected = sectors * dtheta
+    insertion = np.searchsorted(expected_angles, angles)
+    right = insertion % n_sectors
+    left = (insertion - 1) % n_sectors
+    right_error = np.abs(
+        np.arctan2(
+            np.sin(angles - expected_angles[right]),
+            np.cos(angles - expected_angles[right]),
+        )
+    )
+    left_error = np.abs(
+        np.arctan2(
+            np.sin(angles - expected_angles[left]),
+            np.cos(angles - expected_angles[left]),
+        )
+    )
+    sectors = np.where(left_error <= right_error, left, right)
+    expected = expected_angles[sectors]
     angle_error = np.abs(np.arctan2(np.sin(angles - expected), np.cos(angles - expected)))
     max_angle_error = float(angle_error.max(initial=0.0))
     if max_angle_error > angle_tol:
         raise ValueError(
-            "Contact nodes do not lie on the requested regular sectors: "
+            "Contact nodes do not lie on the requested meridians: "
             f"maximum angular error is {max_angle_error:.3e} rad"
         )
 
@@ -767,25 +1329,62 @@ def order_contact_sectors(
         ordered_indices[sector] = indices[np.argsort(points[indices, 0])]
 
     ordered_points = points[ordered_indices]
-    reference_x = ordered_points[0, :, 0]
-    reference_radius = np.linalg.norm(
-        ordered_points[0, :, 1:] - np.array([y0, z0]), axis=1
-    )
-    for sector in range(1, n_sectors):
-        radius = np.linalg.norm(
-            ordered_points[sector, :, 1:] - np.array([y0, z0]), axis=1
+    if geometry_tol is not None:
+        if geometry_tol < 0.0:
+            raise ValueError("geometry_tol must be non-negative or None")
+        reference_x = ordered_points[0, :, 0]
+        reference_radius = np.linalg.norm(
+            ordered_points[0, :, 1:] - np.array([y0, z0]), axis=1
         )
-        if not np.allclose(ordered_points[sector, :, 0], reference_x, atol=geometry_tol, rtol=0.0):
-            raise ValueError(f"Axial coordinates differ in sector {sector}")
-        if not np.allclose(radius, reference_radius, atol=geometry_tol, rtol=0.0):
-            raise ValueError(f"Radial coordinates differ in sector {sector}")
+        for sector in range(1, n_sectors):
+            radius = np.linalg.norm(
+                ordered_points[sector, :, 1:] - np.array([y0, z0]), axis=1
+            )
+            if not np.allclose(
+                ordered_points[sector, :, 0],
+                reference_x,
+                atol=geometry_tol,
+                rtol=0.0,
+            ):
+                raise ValueError(f"Axial coordinates differ in sector {sector}")
+            if not np.allclose(
+                radius, reference_radius, atol=geometry_tol, rtol=0.0
+            ):
+                raise ValueError(f"Radial coordinates differ in sector {sector}")
 
     return SectorOrdering(
         scalar_dofs=scalar_dofs[ordered_indices],
         parent_y_dofs=parent_y_dofs[ordered_indices],
         parent_z_dofs=parent_z_dofs[ordered_indices],
         points=ordered_points,
+        sector_angles=expected_angles,
         sector_angle_error=max_angle_error,
+    )
+
+
+def order_contact_sectors(
+    points: np.ndarray,
+    scalar_dofs: np.ndarray,
+    parent_y_dofs: np.ndarray,
+    parent_z_dofs: np.ndarray,
+    n_sectors: int,
+    *,
+    axis_yz: tuple[float, float] = (0.0, 0.0),
+    angle_tol: float = 1.0e-8,
+    geometry_tol: float = 1.0e-9,
+) -> SectorOrdering:
+    """Group a regular surface of revolution into equal angular sectors."""
+    if n_sectors < 2:
+        raise ValueError("n_sectors must be >= 2")
+    return order_contact_meridians(
+        points,
+        scalar_dofs,
+        parent_y_dofs,
+        parent_z_dofs,
+        np.arange(n_sectors, dtype=float) * (2.0 * np.pi / n_sectors),
+        axis_yz=axis_yz,
+        angle_tol=angle_tol,
+        geometry_tol=geometry_tol,
     )
 
 
@@ -805,6 +1404,75 @@ def create_lu_solver(
         pc.setFactorSolverType(factor_solver_type)
     ksp.setFromOptions()
     ksp.setUp()
+    return ksp
+
+
+def create_iterative_solver(
+    A: PETSc.Mat,
+    comm: MPI.Comm,
+    *,
+    coordinates: np.ndarray | None = None,
+    ksp_type: str = "cg",
+    pc_type: str = "gamg",
+    relative_tolerance: float = 1.0e-10,
+    absolute_tolerance: float = 1.0e-14,
+    max_iterations: int = 2000,
+    options_prefix: str = "cofebem_fe_",
+) -> PETSc.KSP:
+    """Create a reusable SPD iterative solver for compliance actions.
+
+    ``coordinates`` must contain one three-dimensional point per vector CG1
+    node.  GAMG receives both these coordinates and PETSc's six rigid-body
+    near-nullspace modes, which are important for elasticity coarsening.
+    """
+    if relative_tolerance <= 0.0 or not np.isfinite(relative_tolerance):
+        raise ValueError("relative_tolerance must be finite and positive")
+    if absolute_tolerance < 0.0 or not np.isfinite(absolute_tolerance):
+        raise ValueError("absolute_tolerance must be finite and non-negative")
+    if max_iterations <= 0:
+        raise ValueError("max_iterations must be positive")
+    if not options_prefix or not options_prefix.endswith("_"):
+        raise ValueError("options_prefix must be non-empty and end in '_'")
+
+    A.setOption(PETSc.Mat.Option.SYMMETRIC, True)
+    A.setOption(PETSc.Mat.Option.SPD, True)
+    coordinate_array = None
+    near_nullspace = None
+    if coordinates is not None:
+        coordinate_array = np.asarray(coordinates, dtype=PETSc.RealType)
+        if coordinate_array.ndim != 2 or coordinate_array.shape[1] != 3:
+            raise ValueError("coordinates must have shape (n_nodes, 3)")
+        if coordinate_array.size != A.getLocalSize()[0]:
+            raise ValueError(
+                "three coordinate values per node must match the local FE rows"
+            )
+        coordinate_vector = A.createVecRight()
+        coordinate_vector.setBlockSize(3)
+        coordinate_vector.getArray()[:] = coordinate_array.reshape(-1)
+        near_nullspace = PETSc.NullSpace().createRigidBody(coordinate_vector)
+        A.setNearNullSpace(near_nullspace)
+        coordinate_vector.destroy()
+
+    ksp = PETSc.KSP().create(comm)
+    ksp.setOptionsPrefix(options_prefix)
+    ksp.setOperators(A)
+    ksp.setType(ksp_type)
+    ksp.setNormType(PETSc.KSP.NormType.UNPRECONDITIONED)
+    ksp.setInitialGuessNonzero(False)
+    ksp.setTolerances(
+        rtol=relative_tolerance,
+        atol=absolute_tolerance,
+        max_it=max_iterations,
+    )
+    pc = ksp.getPC()
+    pc.setType(pc_type)
+    if coordinate_array is not None:
+        pc.setCoordinates(coordinate_array)
+    ksp.setFromOptions()
+    ksp.setUp()
+    # PETSc objects retain the attached near-nullspace after setup.
+    if near_nullspace is not None:
+        near_nullspace.destroy()
     return ksp
 
 

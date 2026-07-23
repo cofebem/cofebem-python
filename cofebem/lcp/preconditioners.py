@@ -6,6 +6,40 @@ import numpy as np
 from scipy.fft import dct, fft, fftfreq, idct, ifft
 
 
+class SurfaceAreaDiagonalPreconditioner:
+    """SPD local inverse-compliance scale for an unstructured surface.
+
+    For a nodal patch of characteristic size ``h ~ sqrt(area)``, elastic
+    half-space compliance scales approximately as ``1 / h``. Multiplication by
+    ``sqrt(area)`` is therefore a cheap diagonal approximation to its inverse.
+    A positive floor prevents small boundary patches from becoming singular.
+    """
+
+    def __init__(self, nodal_areas: np.ndarray, *, floor_ratio: float = 1.0e-3):
+        areas = np.asarray(nodal_areas, dtype=np.float64).reshape(-1)
+        if areas.size == 0 or not np.all(np.isfinite(areas)):
+            raise ValueError("nodal_areas must be a nonempty finite vector")
+        if np.any(areas <= 0.0):
+            raise ValueError("nodal_areas must be positive")
+        if not 0.0 < floor_ratio <= 1.0:
+            raise ValueError("floor_ratio must lie in (0, 1]")
+        scale = np.sqrt(areas)
+        floor = floor_ratio * float(np.median(scale))
+        self.diagonal = np.maximum(scale, floor)
+        self.diagonal /= float(np.mean(self.diagonal))
+        self.shape = (areas.size, areas.size)
+
+    def __call__(self, residual: np.ndarray, free_mask: np.ndarray) -> np.ndarray:
+        residual = np.asarray(residual, dtype=np.float64).reshape(-1)
+        free = np.asarray(free_mask, dtype=bool).reshape(-1)
+        n = self.shape[0]
+        if residual.shape != (n,) or free.shape != (n,):
+            raise ValueError(f"residual and free_mask must have shape ({n},)")
+        if not np.all(np.isfinite(residual)):
+            raise ValueError("residual contains NaN or infinite values")
+        return np.where(free, self.diagonal * residual, 0.0)
+
+
 class RestrictedProjectedPreconditioner:
     """Principal-subspace view of a full projected preconditioner.
 
@@ -73,6 +107,11 @@ class SectorSurfaceSpectralPreconditioner:
     unlike a fixed-total-load formulation, their constant-pressure mode is a
     genuine degree of freedom and must not be projected out.
 
+    Nonuniform meridians are accepted for the graded tyre. Their revolution
+    axis is obtained by circle fitting; the Fourier transform then acts in the
+    periodic meridian index and remains an SPD algebraic preconditioner, though
+    its symbol is only an approximation to the nonuniform physical spacing.
+
     Parameters
     ----------
     sector_points : ndarray, shape (n_sectors, n_axial, 3)
@@ -106,9 +145,18 @@ class SectorSurfaceSpectralPreconditioner:
         if axial_length <= 0.0:
             raise ValueError("axial coordinates must span a positive length")
 
-        # Averaging the transverse coordinates over all regular sectors gives
-        # the revolution axis even after the mesh has been shifted vertically.
-        transverse_axis = points[:, :, 1:].mean(axis=0)
+        # Fit the revolution axis independently on every axial circle. Unlike
+        # a coordinate average, this remains exact for nonuniform angular
+        # meridians used by the graded tyre mesh.
+        transverse_axis = np.empty((self.n_axial, 2), dtype=np.float64)
+        for axial in range(self.n_axial):
+            yz = points[:, axial, 1:]
+            circle_system = np.column_stack(
+                [2.0 * yz[:, 0], 2.0 * yz[:, 1], np.ones(self.n_sectors)]
+            )
+            circle_rhs = np.sum(yz**2, axis=1)
+            fit, *_ = np.linalg.lstsq(circle_system, circle_rhs, rcond=None)
+            transverse_axis[axial] = fit[:2]
         radii = np.linalg.norm(
             points[:, :, 1:] - transverse_axis[None, :, :], axis=2
         )

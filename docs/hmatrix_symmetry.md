@@ -89,3 +89,19 @@ normal operator rather than separate normal and tangential H-matrices. ACA
 tolerance is local to each admissible block and does not by itself guarantee
 that the approximation remains positive definite. PPCG detects non-positive
 search curvature and reports numerical breakdown if that invariant is lost.
+
+## Optional local symmetry patch
+
+For a graded tyre, physical tag `204` identifies only the regular 60-degree
+road-facing surface. `LocalDihedralComplianceEntrySource` uses the same
+reference-meridian samples on this open patch, without periodic wraparound,
+and obtains the reverse orientation by Maxwell--Betti reciprocity. The
+H-matrix, ACA queries and LCP unknowns are restricted to this tag. Tags `201`
+and `204` are still combined for pressure integration and for checking that
+contact has not escaped the fine patch.
+
+Local regularity does not make the globally condensed FE operator rotationally
+invariant: the coarse remainder still affects patch displacement. The example
+therefore performs configurable direct-FE column validation and reports the
+error. Use the factorized-FE matrix-free strategy when that approximation is
+unacceptable.

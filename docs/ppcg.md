@@ -232,7 +232,12 @@ Use the sector-spectral preconditioner only when:
 The current implementation is serial at the example level. The transforms are
 local NumPy/SciPy operations and do not gather a distributed contact vector.
 
-Use unpreconditioned `ppcg` for a non-sector surface or when no suitable SPD
+For the graded tetrahedral tyre, the same `spectral` input choice dispatches to
+an SPD diagonal surface model proportional to the square root of each nodal
+associated area. This supplies the local inverse-compliance scale without
+pretending the unstructured triangles form a periodic sector grid.
+
+Use unpreconditioned `ppcg` for another non-sector surface or when no suitable SPD
 preconditioner is available. Use `ccg_v2` as a regression baseline. If PPCG
 returns `numerical_breakdown`, first check H-matrix positive definiteness,
 ordering, and the preconditioner's masked positivity; merely disabling the

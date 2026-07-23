@@ -3,7 +3,9 @@
     "template": "../geo_files/geometry_v2.geo",
     "file": "../results/tyre_dihedral/tyre_dihedral.msh",
     "axial_divisions": 300,
-    "circumferential_divisions": 700,
+    "circumferential_divisions": 118,
+    "circumferential_layout": "graded",
+    "coarsening_factor": 6.0,
     "scale": 0.001,
     "regenerate": false
   },
@@ -38,9 +40,19 @@
   },
   "compliance": {
     "strategy": "hmatrix",
-    "load": "../results/tyre_dihedral/compliance.npz",
+    "load": null,
     "factor_solver_type": null,
     "memory_map": true
+  },
+  "linear_solver": {
+    "iterative_ksp_type": "cg",
+    "iterative_pc_type": "gamg",
+    "relative_tolerance": 1e-10,
+    "absolute_tolerance": 1e-14,
+    "max_iterations": 2000,
+    "options_prefix": "cofebem_fe_",
+    "schur_factor_type": "lu",
+    "schur_max_memory_gib": 4.0
   },
   "solver": {
     "contact_method": "ppcg",
@@ -55,7 +67,11 @@
     "eta": 1.5,
     "tolerance": 1e-7,
     "max_rank": 50,
-    "split": "pca"
+    "split": "pca",
+    "local_symmetry_tag": 204,
+    "local_symmetry_validation_columns": 4,
+    "local_symmetry_tolerance": 0.05,
+    "local_symmetry_strict": false
   },
   "potential_contact": {
     "warning_distance": 0.01,
@@ -69,6 +85,7 @@
   },
   "postprocessing": {
     "stress_projection": "lumped",
+    "stress_recovery": "equilibrated",
     "write_vtk": true,
     "save_volume_fields": false
   }

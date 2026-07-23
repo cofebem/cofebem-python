@@ -75,9 +75,13 @@ refactorize the bulk stiffness.
 
 ## Reuse and factor persistence
 
-The script calls `create_lu_solver` exactly once. PETSc `PREONLY+LU` setup
-factorizes the stiffness on that call, and all inflation, compliance-sampling,
-matrix-free PPCG, and result-recovery solves reuse the same KSP.
+The H-matrix and `fe_matrix_free` strategies call `create_lu_solver` exactly
+once. PETSc `PREONLY+LU` setup factorizes the stiffness on that call, and all
+inflation, compliance-sampling, matrix-free PPCG, and result-recovery solves
+reuse the same KSP. `fe_iterative` similarly reuses one KSP/PC setup.
+`mumps_schur` first uses a temporary LU to obtain the inflation displacement,
+then releases it and reuses one exact motion-union selected-Schur factor for
+all contact and recovery solves; its reported factorization count is two.
 
 PETSc 3.24.3 in `fenicsx-env` was tested with its PETSc, MUMPS, SuperLU,
 UMFPACK, and KLU factor matrices. None could be written with a PETSc binary
@@ -113,6 +117,6 @@ backend selection.
 - `motion_steps/contact_result_XXXXX.npz` stores complete contact arrays for
   each state.
 - `motion_history.npz` stores the expanded schedule, convergence/resultant
-  histories, timings, and `factorization_count=1`.
+  histories, timings, peak RSS, and the backend-dependent factorization count.
 - `contact_result.npz` and the strategy-specific result archive contain the
   final state for compatibility with one-step post-processing.

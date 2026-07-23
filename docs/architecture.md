@@ -104,6 +104,13 @@ compliance representation and evaluates `S_c p` by a back-solve with the
 factorized FE stiffness. The generic `cofebem.fenics.Contact.solve()` adapter
 still uses the dense branch.
 
+The same action has experimental iterative and selected-Schur backends. The
+iterative path replaces each LU back-solve with a tightly converged
+`CG+GAMG` solve. The MUMPS path forms and factors the condensed stiffness on a
+fixed motion-union potential zone, then solves that system during PPCG. It
+does not form compliance, but its selected Schur factor is dense; see
+`docs/linear_solver_backends.md`.
+
 ## Components
 
 ### FEniCSx adapters
@@ -142,6 +149,19 @@ fixed road-normal direction and avoiding global dense reconstruction. The
 inflation-only displacement is added to the undeformed road gap before solving
 the LCP, and inflation and contact loads are superposed in the final elastic
 solve.
+
+The optional road-facing graded mesh gives up global discrete rotational
+symmetry: it uses a regular 60-degree fine zone, two 30-degree transitions,
+and a coarse back side. The exact option is the factorized-FE operator path.
+An optional tag-204 path restricts reference-meridian reconstruction, ACA and
+contact unknowns to the fine patch. Because the coarse remainder still enters
+the condensed compliance, this local reconstruction is explicitly treated as
+an approximation and validated against selected direct FE columns. The current
+DOLFINx 0.9 importer is single-topology, so the
+conforming implementation uses one tetrahedral volume topology rather than an
+unsupported mixed hex/tet function space. Its fine contact surface remains
+transfinite while transition and rear regions coarsen axially. See
+`docs/graded_tyre_mesh.md`.
 
 The tyre stiffness fixes all displacement components only on the two mirrored
 3 mm disk-edge strips generated from template curves 8 and 153. The adjacent

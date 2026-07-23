@@ -61,7 +61,8 @@ The rectangular matrix is never stored in either case. Excluded nodes with
 w_all < -warning_verification_tol
 ```
 
-are violations. Their sector/axial halo is added to `K`, the restricted
+are violations. Their structured sector/axial halo (or nearest-neighbour halo
+on the graded triangular surface) is added to `K`, the restricted
 H-matrix is rebuilt, and the LCP resumes from the scattered previous pressure.
 The default limit is five solve/verification rounds. An uncertified final round
 raises an error and asks for a larger warning distance instead of silently
@@ -102,7 +103,7 @@ Relevant options are:
 | option | default | meaning |
 |---|---:|---|
 | `--warning-distance` | `0.02` | Maximum free gap admitted initially; `inf` selects the full surface. |
-| `--warning-halo` | `1` | Periodic-sector/nonperiodic-axial dilation around violations. |
+| `--warning-halo` | `1` | Sector/axial or unstructured surface-neighbour dilation around violations. |
 | `--warning-max-rounds` | `5` | Maximum restricted solve and verification rounds. |
 | `--warning-verification-tol` | `1e-7` | Allowed negative excluded-node clearance in length units. |
 

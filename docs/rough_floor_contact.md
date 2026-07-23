@@ -61,7 +61,7 @@ Two positive-compression conventions are saved on the tyre contact surface:
 
 ```text
 contact_pressure_force_based[i] = nodal_force[i] / associated_area[i]
-contact_pressure_stress          = projection of -n . sigma(u_contact) . n
+contact_pressure_stress          = equilibrated -n . sigma(u_contact) . n
 u_contact                        = u_final - u_inflation
 ```
 
@@ -73,17 +73,21 @@ force-based field therefore preserves the contact resultant to roundoff:
 sum_i contact_pressure_force_based[i] * A_i = sum_i nodal_force[i].
 ```
 
-The stress field deliberately uses only the contact displacement increment,
-excluding the inflation preload. It is a raw signed FE stress recovery. It can
-oscillate and differ substantially from force/area near nodal loads, especially
-for nearly incompressible CG1 elements; this difference is diagnostic rather
-than silently clipped or rescaled.
+The stress field uses only the contact displacement increment, excluding the
+inflation preload. Its default `equilibrated` recovery applies the assembled
+stiffness to that increment. The boundary entries of `A u_contact` are the
+weak FE representation of `sigma(u_contact) . n`; dividing the vertical
+traction by the averaged downward normal component and nodal area recovers
+positive normal pressure. This avoids taking a pointwise boundary trace of
+the discontinuous CG1 tetrahedral stress. Inactive boundary values remain at
+roundoff and the pressure resultant provides a useful equilibrium check.
 
-The tyre example defaults to a mass-lumped projection: the assembled stress
-load is divided by the consistent nodal area. This preserves constant stress
-without constructing or factorizing another surface matrix. Select
-`postprocessing.stress_projection: "consistent"` for the previous full L2
-projection when memory permits.
+The tyre example defaults to a mass-lumped projection. Select
+`postprocessing.stress_projection: "consistent"` for a consistent surface-mass
+solve when memory permits. `postprocessing.stress_recovery: "raw"` retains the
+old strong element-stress trace for diagnostics; `"nodal_average"` first
+performs volume patch averaging. Both alternatives can oscillate under nodal
+loading and are not recommended as the reported contact pressure.
 
 ## Outputs
 

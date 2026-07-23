@@ -2,23 +2,23 @@
   "mesh": {
     "template": "../geo_files/geometry_v2.geo",
     "file": "../results/tyre_dihedral/tyre_dihedral.msh",
-    "axial_divisions": 200,
-    "circumferential_divisions": 400,
-    "circumferential_layout": "uniform",
+    "axial_divisions": 100,
+    "circumferential_divisions": 40,
+    "circumferential_layout": "graded",
     "coarsening_factor": 6.0,
     "scale": 0.001,
     "regenerate": false
   },
   "material": {
-    "young_modulus": 250000000.0,
+    "young_modulus": 25000000.0,
     "poisson_ratio": 0.48,
-    "inflation_pressure": 150000.0
+    "inflation_pressure": 15000.0
   },
   "floor": {
     "kind": "rough",
     "level": 0.0,
     "grid_size": 256,
-    "margin": 0.02
+    "margin": 0.0
   },
   "roughness": {
     "rms": 0.0002,
@@ -33,48 +33,38 @@
     "time": [0, 1, 2, 3, 4],
     "interval_steps": [10, 10, 10, 10],
     "indentation": [0.0, 0.01, 0.01, 0.01, 0.01],
-    "floor_rotation_y_deg": [0.0, 0.0, 0.0, 3.0, 3.0],
-    "floor_rotation_z_deg": [0.0, 0.0, 3.0, 0.0, 0.0],
-    "floor_translation_x": [0.0, 0.0, 0.01, 0.01, 0.01],
-    "floor_translation_y": [0.0, 0.0, 0.0, 0.01, 0.01]
+    "floor_rotation_y_deg": [0.0, 0.0, 0.0, 0.0, 0.0],
+    "floor_rotation_z_deg": [0.0, 0.0, 3.0, 3.0, 3.0],
+    "floor_translation_x": [0.0, 0.0, 0.0, 0.02, 0.02],
+    "floor_translation_y": [0.0, 0.0, 0.0, 0.0, 0.02]
   },
   "compliance": {
     "strategy": "hmatrix",
-    "load": "../results/tyre_dihedral/compliance.npz",
+    "load": null,
     "factor_solver_type": null,
     "memory_map": true
   },
-  "linear_solver": {
-    "iterative_ksp_type": "cg",
-    "iterative_pc_type": "gamg",
-    "relative_tolerance": 1e-10,
-    "absolute_tolerance": 1e-14,
-    "max_iterations": 2000,
-    "options_prefix": "cofebem_fe_",
-    "schur_factor_type": "lu",
-    "schur_max_memory_gib": 4.0
-  },
   "solver": {
     "contact_method": "ppcg",
-    "max_iterations": 10000,
-    "tolerance": 1e-10,
+    "max_iterations": 1000,
+    "tolerance": 1e-8,
     "pcg_preconditioner": "spectral",
     "pcg_zero_mode_factor": 1.0,
     "pcg_beta_method": "pr_plus"
   },
   "hmatrix": {
     "leaf_size": 32,
-    "eta": 1.0,
+    "eta": 1.5,
     "tolerance": 1e-7,
     "max_rank": 50,
     "split": "pca",
-    "local_symmetry_tag": null,
+    "local_symmetry_tag": 204,
     "local_symmetry_validation_columns": 4,
     "local_symmetry_tolerance": 0.05,
     "local_symmetry_strict": false
   },
   "potential_contact": {
-    "warning_distance": 0.02,
+    "warning_distance": 0.01,
     "halo": 1,
     "max_rounds": 5,
     "verification_tolerance": 1e-7

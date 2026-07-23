@@ -24,6 +24,8 @@ _SECTIONS: dict[str, dict[str, str]] = {
         "file": "mesh",
         "axial_divisions": "axial_divisions",
         "circumferential_divisions": "circumferential_divisions",
+        "circumferential_layout": "circumferential_layout",
+        "coarsening_factor": "coarsening_factor",
         "scale": "scale",
         "regenerate": "regenerate",
     },
@@ -53,6 +55,16 @@ _SECTIONS: dict[str, dict[str, str]] = {
         "factor_solver_type": "factor_solver_type",
         "memory_map": "mmap_compliance",
     },
+    "linear_solver": {
+        "iterative_ksp_type": "fe_ksp_type",
+        "iterative_pc_type": "fe_pc_type",
+        "relative_tolerance": "fe_rtol",
+        "absolute_tolerance": "fe_atol",
+        "max_iterations": "fe_max_iter",
+        "options_prefix": "fe_options_prefix",
+        "schur_factor_type": "schur_factor_type",
+        "schur_max_memory_gib": "schur_max_memory_gib",
+    },
     "solver": {
         "contact_method": "contact_solver",
         "max_iterations": "max_iter",
@@ -67,6 +79,10 @@ _SECTIONS: dict[str, dict[str, str]] = {
         "tolerance": "h_tol",
         "max_rank": "h_max_rank",
         "split": "h_split",
+        "local_symmetry_tag": "local_symmetry_tag",
+        "local_symmetry_validation_columns": "local_symmetry_validation_columns",
+        "local_symmetry_tolerance": "local_symmetry_tolerance",
+        "local_symmetry_strict": "local_symmetry_strict",
     },
     "potential_contact": {
         "warning_distance": "warning_distance",
@@ -75,17 +91,19 @@ _SECTIONS: dict[str, dict[str, str]] = {
         "verification_tolerance": "warning_verification_tol",
     },
     "execution": {
+        "output_directory": "output_dir",
         "sampling_only": "sampling_only",
         "show_progress": "show_progress",
     },
     "postprocessing": {
         "stress_projection": "stress_projection",
+        "stress_recovery": "stress_recovery",
         "write_vtk": "write_vtk",
         "save_volume_fields": "save_volume_fields",
     },
 }
 
-_PATH_DESTINATIONS = {"template", "mesh", "load_compliance"}
+_PATH_DESTINATIONS = {"template", "mesh", "load_compliance", "output_dir"}
 
 
 def load_tyre_contact_input(path: str | Path) -> TyreContactInput:

@@ -85,9 +85,15 @@ scope of the task.
 - `cofebem/bodies/`: rigid gap models used by examples.
 - `cofebem/bodies/regular_floor.py`: regular flat/rfgen rough floor generation,
   vertical projection, and floor-mesh output.
-- `cofebem/mesh/tyre_dihedral_hex.py`: tagged D_n-symmetric hex mesh generator
+- `cofebem/mesh/tyre_dihedral_hex.py`: tagged D_n-symmetric uniform-hex and
+  road-facing graded-tetra mesh generator
   for `geo_files/geometry_v2.geo`; its fixed tag is limited to the two mirrored
-  3 mm disk-edge curves, not the adjacent bead surface.
+  3 mm disk-edge curves, not the adjacent bead surface. It also provides a
+  locally fine graded tetrahedral layout. That layout is not globally
+  D_n-symmetric: exact compliance uses the factorized-FE strategy, while the
+  optional approximate H-matrix path is restricted to fine-patch tag 204 and
+  validated against direct FE columns. Graded road tags 201 and 204 are
+  disjoint and their union is the complete road-facing surface.
 - `cofebem/pipeline_fenicsx_minimal.py`: smallest end-to-end example.
 
 Treat most top-level `cofebem/Sc_*.py`, large files under `cofebem/bem/`, and
@@ -110,9 +116,10 @@ When changing compliance construction or contact solving, preserve and test:
 - Units: `S_c` maps nodal force to displacement. The boundary mass solve maps
   nodal force to a traction field; do not mix force and pressure silently.
 - Tyre pressure output: `contact_pressure_force_based` is nodal force divided
-  by consistent associated area; `contact_pressure_stress` is the signed
-  contact-increment recovery `-n.sigma(u_contact).n`. Do not silently equate
-  the two or include inflation stress in the latter.
+  by consistent associated area; `contact_pressure_stress` is the weakly
+  equilibrated contact-increment recovery of `-n.sigma(u_contact).n` from
+  `A @ u_contact`. Do not silently equate the two or include inflation stress
+  in the latter. Raw and nodal-average strong stress traces are diagnostics.
 - H-matrix ordering: the coordinate row order must exactly match the matrix
   order. `symmetric=True` is valid only when the source operator is symmetric.
 - Approximation safety: report matvec error and storage, and check whether an
@@ -160,6 +167,11 @@ Other maintained LCP solvers require dense matrices.
 direct H-matrix and flexibility-matrix-free operator paths; the generic
 `cofebem.fenics.Contact.solve()` adapter is still connected to the dense legacy
 path.
+
+The experimental `fe_iterative` path requires every inner KSP solve and its
+seeded SPD probe to pass before PPCG. The optional `mumps_schur` path factors a
+dense condensed stiffness on one fixed motion-union contact set; respect its
+memory guard and never treat the Schur stiffness itself as compliance.
 
 ## Change and validation practice
 

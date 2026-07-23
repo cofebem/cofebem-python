@@ -8,6 +8,7 @@ from cofebem.lcp import (
     LCP,
     RestrictedProjectedPreconditioner,
     SectorSurfaceSpectralPreconditioner,
+    SurfaceAreaDiagonalPreconditioner,
 )
 from cofebem.lcp.solvers import ppcg
 
@@ -57,6 +58,24 @@ def test_constant_mode_is_not_removed():
     np.testing.assert_allclose(result, result.mean(), rtol=1.0e-12, atol=1.0e-12)
 
 
+def test_sector_preconditioner_fits_axis_for_nonuniform_meridians():
+    angles = np.array([0.0, 0.1, 0.25, 0.6, 1.5, 3.0, 4.5, 5.8])
+    x = np.linspace(-0.5, 0.5, 7)
+    points = np.empty((angles.size, x.size, 3))
+    points[:, :, 0] = x
+    points[:, :, 1] = 1.7 + 2.0 * np.cos(angles)[:, None]
+    points[:, :, 2] = -0.3 + 2.0 * np.sin(angles)[:, None]
+
+    preconditioner = SectorSurfaceSpectralPreconditioner(points)
+    residual = np.arange(preconditioner.shape[0], dtype=float) + 1.0
+    result = preconditioner(
+        residual, np.ones(preconditioner.shape[0], dtype=bool)
+    )
+
+    assert np.isclose(preconditioner.mean_radius, 2.0)
+    assert residual @ result > 0.0
+
+
 def test_exact_matching_spectrum_collapses_pcg_iterations():
     preconditioner = SectorSurfaceSpectralPreconditioner(_sector_points())
     n = preconditioner.shape[0]
@@ -93,6 +112,23 @@ def test_restricted_preconditioner_matches_scatter_apply_gather():
 
     np.testing.assert_allclose(result, expected)
     assert float(residual @ result) > 0.0
+
+
+def test_surface_area_diagonal_preconditioner_is_masked_and_spd():
+    preconditioner = SurfaceAreaDiagonalPreconditioner(
+        np.array([1.0, 4.0, 9.0, 16.0])
+    )
+    residual = np.array([1.0, -2.0, 3.0, -4.0])
+    free = np.array([True, False, True, True])
+
+    result = preconditioner(residual, free)
+
+    assert result[1] == 0.0
+    assert residual @ result > 0.0
+    np.testing.assert_allclose(
+        preconditioner.diagonal / preconditioner.diagonal[0],
+        np.array([1.0, 2.0, 3.0, 4.0]),
+    )
 
 
 @pytest.mark.parametrize("zero_mode_factor", [0.0, -1.0])

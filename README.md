@@ -73,17 +73,28 @@ been made MPI-safe.
 
 ### Dihedral tyre-road example
 
-`examples/tyre_dihedral_contact.py` generates a full structured hexahedral tyre
-from `geo_files/geometry_v2.geo`, with configurable axial and circumferential
-divisions. Its default strategy uses two auxiliary load directions on one
+`examples/tyre_dihedral_contact.py` generates either a full structured uniform
+hexahedral tyre or a graded tetrahedral tyre from
+`geo_files/geometry_v2.geo`. The graded mesh preserves an exact 60-degree fine
+contact surface, uses two 30-degree transitions, and coarsens axially and
+circumferentially around the back side; see the
+[graded tyre mesh](docs/graded_tyre_mesh.md). The uniform-mesh H-matrix strategy
+uses two auxiliary load directions on one
 reference meridian to retain the fixed road-normal direction, contracts them
 into three scalar-normal sample fields, and builds one symmetric normal
 H-matrix directly from ACA entry queries. An alternative flexibility-matrix-
 free strategy applies the exact contact compliance by back-solving the already
 factorized FE stiffness during every PPCG operator application. Both apply the
 internal inflation preload by linear superposition and solve contact against
-the road plane with projected preconditioned CG (`ppcg`) and a tyre-sector
-spectral preconditioner:
+the road plane with projected preconditioned CG (`ppcg`). Uniform surfaces use
+the tyre-sector spectral preconditioner; graded triangular surfaces use an SPD
+nodal-area diagonal preconditioner:
+
+The graded mesh additionally tags its regular fine patch as physical surface
+204. Setting `hmatrix.local_symmetry_tag` to 204 builds an open-patch H-matrix
+only there and validates selected reconstructed columns against direct FE
+solves. This is approximate because the coarse remainder is not rotationally
+invariant; matrix-free compliance remains the exact option.
 
 ```bash
 conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
@@ -109,6 +120,11 @@ conda run -n fenicsx-env python examples/tyre_dihedral_contact.py \
 
 See the [flexibility-matrix-free study](docs/flexibility_matrix_free.md) for
 the formulation, timing comparison, storage trade-off, and comparison utility.
+Two experimental operator backends are also available: `fe_iterative` uses a
+strictly checked PETSc CG solve to reduce direct-factor memory, while
+`mumps_schur` factors the condensed stiffness of the fixed motion-union
+potential zone for fast repeated actions. See
+[linear solver backends](docs/linear_solver_backends.md).
 
 The road can be a regular flat floor or a periodic self-affine rough floor
 generated with `rfgen`. Tyre nodes are vertically projected onto its bilinear
@@ -151,10 +167,43 @@ python examples/tyre_dihedral_contact.py -in examples/input.json
 See [complete tyre-contact input](docs/tyre_contact_input.md) for the schema,
 relative-path behavior, and CLI override rules.
 
-Large cases default to memory-mapped compliance samples and mass-lumped stress
-recovery, avoiding a second direct factorization during postprocessing. Volume
-fields are streamed to VTK but are not duplicated in every step NPZ unless
-requested.
+The normal-contact operator strategies can be reproduced on three small tyre
+meshes with an isolated-process benchmark. It compares dihedral and
+non-dihedral H-matrices, direct factorized-$K$ actions, and MUMPS selected
+Schur actions for one and ten load states, then writes a LaTeX table plus
+timing and peak-memory graphs:
+
+```bash
+conda run -n fenicsx-env python \
+  examples/benchmark_tyre_contact_strategies.py --regenerate-meshes
+```
+
+See the [strategy benchmark](docs/tyre_strategy_benchmark.md) for its exact
+configuration, metrics, accuracy audit, and interpretation.
+
+For a clearer amortization study without fixed startup and I/O costs, the
+larger three-strategy benchmark measures setup and one online contact state,
+then projects one, ten, and 100 repeated states:
+
+```bash
+conda run -n fenicsx-env python \
+  examples/benchmark_tyre_contact_step_projection.py --regenerate-mesh
+```
+
+See [larger contact-step projection](docs/tyre_step_projection.md) for the
+timing definition, results, accuracy, and limits of the extrapolation.
+
+The memory-oriented 300-axial case in `examples/sm_input.json` uses 118 fine
+divisions over 60 degrees and a coarsening factor of 6. It retains the local
+angular resolution of the former 700-sector mesh while reducing the complete
+mesh to 232 circumferential meridians. Because local grading breaks global
+discrete rotational symmetry, this case uses the exact factorized-FE
+compliance strategy.
+
+Uniform H-matrix cases default to memory-mapped compliance samples. All large
+cases use mass-lumped stress recovery, avoiding a second direct factorization
+during postprocessing. Volume fields are streamed to VTK but are not duplicated
+in every step NPZ unless requested.
 
 By default, the example builds and solves only the part of the tyre whose
 inflation-adjusted free gap is within `--warning-distance 0.02` of the road.
