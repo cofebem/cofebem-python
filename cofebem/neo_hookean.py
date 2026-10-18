@@ -1,334 +1,422 @@
+from pathlib import Path
+from time import perf_counter
+
+import basix
 import numpy as np
+import ufl
 from mpi4py import MPI
 from petsc4py import PETSc
 
-from dolfinx.mesh import (
-    locate_entities_boundary,
-    create_box,
-    CellType,
-    entities_to_geometry,
-)
 from dolfinx.fem import (
-    Constant,
+    Expression,
     Function,
-    functionspace,
-    dirichletbc,
-    locate_dofs_topological,
-    form,
-)
-from dolfinx.fem.petsc import (
-    assemble_matrix,
     assemble_vector,
-    apply_lifting,
-    set_bc,
-    create_vector,
+    dirichletbc,
+    form,
+    functionspace,
+    locate_dofs_topological,
 )
-from ufl import (
-    Identity,
-    TestFunction,
-    TrialFunction,
-    grad,
-    inner,
-    tr,
-    det,
-    ln,
-    dx,
-    variable,
-    derivative,
-)
-
-from cofebem.bodies.sphere_indenter import Sphere
-from cofebem.contact.Sc_normal import Sc_normal
-
-# from cofebem.contact.lcp_solvers.lemke import lemkelcp
-
-
-# ============================================================
-# Helpers
-# ============================================================
-
-
-def unique_vertices_from_facets(mesh, facet_ids):
-    """
-    Return unique geometry vertex ids belonging to the given facets.
-    Works well for P1 geometric meshes.
-    """
-    mesh.topology.create_connectivity(mesh.topology.dim - 1, 0)
-    g = entities_to_geometry(mesh, mesh.topology.dim - 1, facet_ids)
-    return np.unique(g.reshape(-1)).astype(np.int64)
-
-
-def contact_vertex_to_vector_dofs(V, vertex_ids):
-    """
-    For a CG1 vector space on a standard mesh, recover parent dofs attached
-    to the given boundary vertices.
-    """
-    tdim = V.mesh.topology.dim
-    dofs_xyz = []
-    for c in range(tdim):
-        Vc, sub_to_parent = V.sub(c).collapse()
-        dofs_c = locate_dofs_topological((V.sub(c), Vc), 0, vertex_ids)[0]
-        dofs_xyz.append(dofs_c)
-
-    dofs_xyz = np.stack(dofs_xyz, axis=1)
-    return dofs_xyz
-
-
-def assemble_tangent_and_residual(jacobian_form, residual_form, u, bcs):
-    """
-    Assemble the current tangent matrix K(u) and residual vector R(u).
-    """
-    A = assemble_matrix(form(jacobian_form), bcs=bcs)
-    A.assemble()
-
-    r = assemble_vector(form(residual_form))
-    apply_lifting(r, [form(jacobian_form)], [bcs], x0=[u.x.petsc_vec], alpha=-1.0)
-    r.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-    set_bc(r, bcs, u.x.petsc_vec, -1.0)
-
-    return A, r
-
-
-def build_contact_rhs_from_nodal_forces(V, contact_dofs_xyz, fc_xyz):
-    """
-    Build a global RHS vector from nodal contact force vectors applied at
-    contact vector dofs.
-    """
-    rhs = create_vector(
-        form(
-            inner(
-                Constant(V.mesh, np.zeros(V.mesh.topology.dim, dtype=PETSc.ScalarType)),
-                TestFunction(V),
-            )
-            * dx
-        )
-    )
-    rhs.set(0.0)
-
-    flat_dofs = contact_dofs_xyz.reshape(-1)
-    flat_vals = fc_xyz.reshape(-1)
-    rhs.setValues(flat_dofs, flat_vals, addv=PETSc.InsertMode.INSERT_VALUES)
-    rhs.assemble()
-    return rhs
-
-
-# ============================================================
-# Mesh
-# ============================================================
-
-Lbox = 1.0
-ncells = 5
-mesh = create_box(
-    MPI.COMM_WORLD,
-    [[0.0, 0.0, 0.0], [Lbox, Lbox, Lbox]],
-    [ncells * 10, ncells * 10, ncells],
-    CellType.hexahedron,
-)
-
-tdim = mesh.topology.dim
-fdim = tdim - 1
-
-
-# ============================================================
-# Material
-# ============================================================
-
-E = 1.0e9
-nu = 0.3
-lmbda = E * nu / ((1 + nu) * (1 - 2 * nu))
-mu = E / (2 * (1 + nu))
-
-V = functionspace(mesh, ("Lagrange", 1, (tdim,)))
-
-u = Function(V)
-du = Function(V)  # Newton increment (solution of tangent system)
-v = TestFunction(V)
-w = TrialFunction(V)
-
-I = Identity(tdim)
-F = variable(I + grad(u))
-C = F.T * F
-J = det(F)
-
-psi = (mu / 2) * (tr(C) - tdim) - mu * ln(J) + (lmbda / 2) * ln(J) ** 2
-b = Constant(mesh, np.zeros(tdim, dtype=PETSc.ScalarType))
-
-residual = derivative(psi * dx, u, v) - inner(b, v) * dx
-jacobian = derivative(residual, u, w)
-
-
-# ============================================================
-# Boundary conditions
-# ============================================================
-
-tol = 1.0e-8
-
-
-def Gamma_u_locator(x):
-    return np.isclose(x[2], 0.0, atol=tol)
-
-
-Gamma_u = locate_entities_boundary(mesh, fdim, Gamma_u_locator)
-dofs_u = locate_dofs_topological(V, fdim, Gamma_u)
-u_D = np.zeros(tdim, dtype=PETSc.ScalarType)
-bcs = [dirichletbc(u_D, dofs_u, V)]
-
-
-# ============================================================
-# Contact geometry
-# ============================================================
-
-
-def Gamma_c_locator(x):
-    return np.isclose(x[2], Lbox, atol=tol)
-
-
-Gamma_c = locate_entities_boundary(mesh, fdim, Gamma_c_locator)
-
-# Geometry vertices on contact boundary
-Ic_vertices = unique_vertices_from_facets(mesh, Gamma_c)
-
-# Vector dofs attached to those vertices
-contact_dofs_xyz = contact_vertex_to_vector_dofs(V, Ic_vertices)
-
-# Current coordinates of contact vertices in the reference mesh
-Xc = mesh.geometry.x[Ic_vertices]
-
-radius = 0.5
-delta = 0.1
-sphere = Sphere(
-    center=np.array([Lbox / 2, Lbox / 2, Lbox + radius - delta]), radius=radius
-)
-
-# Example: fixed normals for a flat top surface in the reference config
-normals = np.tile(np.array([0.0, 0.0, 1.0]), (len(Ic_vertices), 1))
-
-# Initial geometric gap on contact vertices
-g0 = sphere.gap(Xc)
-
-
-# ============================================================
-# Newton loop driven manually
-# ============================================================
-
-max_it = 25
-rtol = 1e-8
-atol = 1e-8
-
-comm = mesh.comm
-
-for k in range(max_it):
-    # --------------------------------------------------------
-    # 1. Assemble current tangent and current residual
-    # --------------------------------------------------------
-    A, R = assemble_tangent_and_residual(jacobian, residual, u, bcs)
-
-    res_norm = R.norm()
-    if comm.rank == 0:
-        print(f"[Newton {k}] residual norm = {res_norm:.6e}")
-
-    if res_norm < atol:
-        if comm.rank == 0:
-            print("Converged by absolute residual.")
-        break
-
-    # --------------------------------------------------------
-    # 2. Update current contact geometry if needed
-    # --------------------------------------------------------
-    # Current contact points in deformed configuration
-    u_array = u.x.array.reshape((-1, tdim))
-    xc_current = mesh.geometry.x[Ic_vertices] + u_array[Ic_vertices]
-
-    # Recompute current gap if using total-gap contact
-    gk = sphere.gap(xc_current)
-
-    # If normals evolve, update them here.
-    # For now, keep them fixed:
-    normals_k = normals
-
-    # --------------------------------------------------------
-    # 3. Build current tangent compliance Sc^(k)
-    # --------------------------------------------------------
-    # Sc_normal expects vertex ids (Ic_vertices), not vector dofs.
-    sc_builder = Sc_normal(
-        A=A,
-        b=R,  # only used to duplicate/create PETSc vecs
-        Ic=Ic_vertices,
-        normals=normals_k,
-        tdim=tdim,
-        f0=1e9,
-    )
-
-    Snn_k = sc_builder.sample_n(show=(comm.rank == 0))
-
-    # --------------------------------------------------------
-    # 4. Solve contact problem in incremental or lagged form
-    # --------------------------------------------------------
-    # Example placeholder:
-    #
-    # Solve something like:
-    #   delta_g = Snn_k @ delta_p + gk
-    # with complementarity
-    #
-    # Here we just put zero incremental contact force as placeholder.
-    delta_p = np.zeros(len(Ic_vertices), dtype=PETSc.ScalarType)
-
-    # Example if you later solve an LCP:
-    # delta_p, _, _ = lemkelcp(Snn_k, gk)
-
-    # Convert normal nodal forces to xyz nodal forces
-    fc_xyz = delta_p[:, None] * normals_k
-
-    # --------------------------------------------------------
-    # 5. Build linearized Newton RHS:
-    #    K_T du = -R + f_contact
-    # --------------------------------------------------------
-    rhs_contact = R.duplicate()
-    rhs_contact.set(0.0)
-
-    flat_dofs = contact_dofs_xyz.reshape(-1)
-    flat_vals = fc_xyz.reshape(-1)
-    rhs_contact.setValues(flat_dofs, flat_vals, addv=PETSc.InsertMode.INSERT_VALUES)
-    rhs_contact.assemble()
-
-    rhs_total = R.duplicate()
-    rhs_total.set(0.0)
-    rhs_total.axpy(-1.0, R)  # -R
-    rhs_total.axpy(+1.0, rhs_contact)  # + f_contact
-    rhs_total.assemble()
-
-    # Re-apply BC treatment to the linearized increment system
-    # since du must satisfy homogeneous Dirichlet conditions
-    set_bc(rhs_total, bcs)
-
-    # --------------------------------------------------------
-    # 6. Solve K_T du = rhs_total
-    # --------------------------------------------------------
+from dolfinx.fem.petsc import assemble_matrix, create_matrix
+from dolfinx.io import VTKFile
+from dolfinx.mesh import CellType, create_box, locate_entities_boundary, meshtags
+
+
+def sphere_geometry(points, center, radius):
+    relative = points - center
+    distance = np.linalg.norm(relative, axis=1)
+    if np.any(distance <= 1.0e-12 * radius):
+        raise ValueError("A contact point is too close to the sphere center.")
+    # Normals point toward the sphere; the force on the cube is -fc * n.
+    normals = -relative / distance[:, None]
+    return distance - radius, normals
+
+
+def gpcg(apply, q, tol=1.0e-10, max_iter=20000):
+    z = np.zeros_like(q)
+    active = q >= 0.0
+    iterations = 0
+    while iterations < max_iter:
+        w = apply(z) + q
+        if np.linalg.norm(np.minimum(z, w), np.inf) <= tol:
+            return z, iterations
+        r = np.where(active, 0.0, -w)
+        if np.linalg.norm(r, np.inf) <= tol:
+            candidates = np.where(active, w, np.inf)
+            active[np.argmin(candidates)] = False
+            iterations += 1
+            continue
+        d = r.copy()
+        rr = r @ r
+        while iterations < max_iter:
+            Md = apply(d)
+            curvature = d @ Md
+            if not np.isfinite(curvature) or curvature <= 0.0:
+                raise RuntimeError(
+                    "Nonpositive curvature in GPCG; the tangent must be SPD."
+                )
+            alpha_cg = rr / curvature
+            decreasing = d < 0.0
+            alpha_max = np.min(-z[decreasing] / d[decreasing], initial=np.inf)
+            alpha = min(alpha_cg, alpha_max)
+            z += alpha * d
+            w += alpha * Md
+            iterations += 1
+            if alpha_max <= alpha_cg:
+                zero_tol = 100.0 * np.finfo(float).eps * max(1.0, np.max(z))
+                hit = decreasing & (z <= zero_tol)
+                active[hit] = True
+                z[hit] = 0.0
+                break
+            r_new = np.where(active, 0.0, -w)
+            if np.linalg.norm(r_new, np.inf) <= tol:
+                break
+            rr_new = r_new @ r_new
+            d = r_new + (rr_new / rr) * d
+            d[active] = 0.0
+            rr = rr_new
+    w = apply(z) + q
+    if np.linalg.norm(np.minimum(z, w), np.inf) <= tol:
+        return z, iterations
+    raise RuntimeError("GPCG did not converge.")
+
+
+def solve_flexibility(
+    K,
+    internal_force,
+    contact_dofs,
+    fixed_dofs,
+    gap,
+    normals,
+    force_scale,
+    gap_scale,
+    comm,
+    tol=1.0e-10,
+    max_iter=20000,
+):
+    # Cholesky and GPCG require an SPD tangent on the unconstrained DOFs.
+    K.setOption(PETSc.Mat.Option.SPD, True)
     ksp = PETSc.KSP().create(comm)
-    ksp.setOperators(A)
-    ksp.setType("preonly")
-    ksp.getPC().setType("lu")
-    ksp.setFromOptions()
-    ksp.setUp()
+    rhs = K.createVecLeft()
+    sol = K.createVecRight()
+    try:
+        ksp.setOperators(K)
+        ksp.setType("preonly")
+        ksp.getPC().setType("cholesky")
+        ksp.getPC().setFactorSolverType("mumps")
+        ksp.setErrorIfNotConverged(True)
+        start = perf_counter()
+        ksp.setUp()
+        factor_time = perf_counter() - start
 
-    du.x.petsc_vec.set(0.0)
-    ksp.solve(rhs_total, du.x.petsc_vec)
-    du.x.scatter_forward()
+        rhs.array[:] = -internal_force
+        rhs.array[fixed_dofs] = 0.0
+        ksp.solve(rhs, sol)
+        free_increment = sol.array_r.copy()
+        q = (
+            gap - np.einsum("ij,ij->i", normals, free_increment[contact_dofs])
+        ) / gap_scale
+        matvecs = 0
 
-    du_norm = du.x.petsc_vec.norm()
-    if comm.rank == 0:
-        print(f"[Newton {k}] ||du|| = {du_norm:.6e}")
+        def apply(z):
+            nonlocal matvecs
+            rhs.set(0.0)
+            rhs.array[contact_dofs] = force_scale * z[:, None] * normals
+            ksp.solve(rhs, sol)
+            matvecs += 1
+            return np.einsum("ij,ij->i", normals, sol.array_r[contact_dofs]) / gap_scale
 
-    # --------------------------------------------------------
-    # 7. Update state
-    # --------------------------------------------------------
-    u.x.petsc_vec.axpy(1.0, du.x.petsc_vec)
-    u.x.scatter_forward()
+        start = perf_counter()
+        z, iterations = gpcg(apply, q, tol=tol, max_iter=max_iter)
+        contact_time = perf_counter() - start
+        fc = force_scale * z
 
-    if du_norm < rtol:
-        if comm.rank == 0:
-            print("Converged by increment norm.")
-        break
+        # fc is the new total force, not a force increment.
+        rhs.array[:] = -internal_force
+        rhs.array[contact_dofs] -= fc[:, None] * normals
+        rhs.array[fixed_dofs] = 0.0
+        ksp.solve(rhs, sol)
+        increment = sol.array_r.copy()
+        if not np.all(np.isfinite(increment)):
+            raise RuntimeError("The displacement increment contains nonfinite values.")
+        return (
+            increment,
+            fc,
+            {
+                "iterations": iterations,
+                "matvecs": matvecs,
+                "factor_s": factor_time,
+                "contact_s": contact_time,
+            },
+        )
+    finally:
+        sol.destroy()
+        rhs.destroy()
+        ksp.destroy()
 
-if comm.rank == 0:
-    print("DONE")
+
+def main():
+    comm = MPI.COMM_WORLD
+    if comm.size != 1:
+        raise RuntimeError("This script is written for serial execution.")
+    if np.dtype(PETSc.ScalarType) != np.dtype(np.float64):
+        raise RuntimeError("This script requires real, double-precision PETSc.")
+
+    Lbox = 1.0
+    nx, ny, nz = 50, 50, 5
+    E, nu = 1.0e9, 0.3
+    radius, delta = 0.5, 0.1
+    quadrature_degree = 4
+    max_iterations = 80
+    max_backtracks = 20
+    newton_tol, contact_tol = 1.0e-8, 1.0e-8
+    gpcg_tol, gpcg_max_iter = 1.0e-10, 20000
+    minimum_jacobian = 1.0e-6
+    output_dir = Path("results/neo_hookean_contact")
+
+    if E <= 0.0 or not -1.0 < nu < 0.5:
+        raise ValueError("Invalid elastic parameters.")
+    if radius <= 0.0 or not 0.0 < delta < min(radius, Lbox):
+        raise ValueError("Require 0 < delta < min(radius, Lbox).")
+
+    setup_start = perf_counter()
+    mesh = create_box(
+        comm,
+        [np.zeros(3), np.full(3, Lbox)],
+        [nx, ny, nz],
+        cell_type=CellType.hexahedron,
+    )
+    tdim = mesh.topology.dim
+    fdim = tdim - 1
+    mesh.topology.create_connectivity(fdim, tdim)
+    bottom = locate_entities_boundary(mesh, fdim, lambda x: np.isclose(x[2], 0.0))
+    top = locate_entities_boundary(mesh, fdim, lambda x: np.isclose(x[2], Lbox))
+    if bottom.size == 0 or top.size == 0:
+        raise RuntimeError("The bottom or contact boundary is empty.")
+    top = np.sort(top)
+    tags = meshtags(mesh, fdim, top, np.full(top.size, 1, dtype=np.int32))
+    dx = ufl.Measure(
+        "dx", domain=mesh, metadata={"quadrature_degree": quadrature_degree}
+    )
+    ds_c = ufl.Measure(
+        "ds",
+        domain=mesh,
+        subdomain_data=tags,
+        metadata={"quadrature_degree": quadrature_degree},
+    )(1)
+
+    V = functionspace(mesh, ("Lagrange", 1, (3,)))
+    u = Function(V)
+    u.name = "u"
+    v = ufl.TestFunction(V)
+    du = ufl.TrialFunction(V)
+    ndofs = u.x.array.size
+    if V.dofmap.index_map_bs != 3 or V.dofmap.bs != 3:
+        raise RuntimeError("Expected a blocked three-component Q1 space.")
+
+    bottom_nodes = locate_dofs_topological(V, fdim, bottom)
+    contact_nodes = locate_dofs_topological(V, fdim, top)
+    bc = dirichletbc(np.zeros(3, dtype=PETSc.ScalarType), bottom_nodes, V)
+    fixed_dofs = (3 * bottom_nodes[:, None] + np.arange(3)).ravel()
+    contact_dofs = 3 * contact_nodes[:, None] + np.arange(3)
+    free_dofs = np.setdiff1d(np.arange(ndofs), fixed_dofs)
+    if np.intersect1d(contact_dofs, fixed_dofs).size:
+        raise RuntimeError("Contact and fixed displacement DOFs overlap.")
+    dof_coordinates = V.tabulate_dof_coordinates()
+    if dof_coordinates.shape[0] * 3 != ndofs:
+        raise RuntimeError("Unexpected displacement DOF coordinate layout.")
+    Xc = dof_coordinates[contact_nodes, :3].copy()
+
+    lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    mu = E / (2.0 * (1.0 + nu))
+    F = ufl.Identity(3) + ufl.grad(u)
+    J = ufl.det(F)
+    C = F.T * F
+    psi = 0.5 * mu * (ufl.tr(C) - 3.0) - mu * ufl.ln(J) + 0.5 * lmbda * ufl.ln(J) ** 2
+    residual_ufl = ufl.derivative(psi * dx, u, v)
+    residual_form = form(residual_ufl)
+    tangent_form = form(ufl.derivative(residual_ufl, u, du))
+    material_matrix = create_matrix(tangent_form)
+    internal_force = np.zeros(ndofs, dtype=PETSc.ScalarType)
+
+    ones = ufl.as_vector((1.0, 1.0, 1.0))
+    # Nanson's formula supplies current areas and deformed solid normals.
+    area_vector = ufl.cofac(F) * ufl.FacetNormal(mesh)
+    surface_jacobian = ufl.sqrt(ufl.dot(area_vector, area_vector))
+    current_area_form = form(surface_jacobian * ufl.dot(ones, v) * ds_c)
+    solid_normal_form = form(ufl.dot(area_vector, v) * ds_c)
+
+    points, _ = basix.make_quadrature(basix.CellType.hexahedron, quadrature_degree)
+    check_points = np.vstack((points, basix.geometry(basix.CellType.hexahedron)))
+    determinant = Expression(J, check_points)
+    cells = np.arange(mesh.topology.index_map(tdim).size_local, dtype=np.int32)
+    determinant_values = np.empty(
+        (cells.size, check_points.shape[0]), dtype=PETSc.ScalarType
+    )
+
+    center = np.array([0.5 * Lbox, 0.5 * Lbox, Lbox + radius - delta])
+    force_scale = E * radius * delta
+    gap_scale = delta
+    fc = np.zeros(contact_nodes.size, dtype=PETSc.ScalarType)
+
+    def evaluate_state(current_fc):
+        determinant.eval(mesh, cells, determinant_values)
+        if not np.all(np.isfinite(determinant_values)):
+            return None
+        min_J = float(np.min(determinant_values))
+        if min_J <= minimum_jacobian:
+            return None
+        try:
+            gap, normals = sphere_geometry(Xc + u.x.array[contact_dofs], center, radius)
+        except ValueError:
+            return None
+        internal_force[:] = 0.0
+        assemble_vector(internal_force, residual_form)
+        equilibrium = internal_force.copy()
+        equilibrium[contact_dofs] += current_fc[:, None] * normals
+        equilibrium = equilibrium[free_dofs] / force_scale
+        complementarity = np.minimum(current_fc / force_scale, gap / gap_scale)
+        residual = np.concatenate((equilibrium, complementarity))
+        if not np.all(np.isfinite(residual)):
+            return None
+        equilibrium_error = np.linalg.norm(equilibrium) / max(
+            np.linalg.norm(current_fc / force_scale), 1.0e-12
+        )
+        contact_error = np.linalg.norm(complementarity, np.inf)
+        return residual, gap, normals, equilibrium_error, contact_error, min_J
+
+    print(f"Displacement DOFs: {ndofs}; contact nodes: {contact_nodes.size}")
+    print(f"Sphere center: {center}; indentation: {delta:g}")
+    print(f"Setup and compilation: {perf_counter() - setup_start:.3f} s")
+    print("iter    equilibrium    contact_err     min_J      alpha    GPCG   matvecs")
+    solve_start = perf_counter()
+    state = evaluate_state(fc)
+    if state is None:
+        raise RuntimeError("Invalid initial configuration.")
+    accepted_alpha = 0.0
+    info = {"iterations": 0, "matvecs": 0}
+    total_factor_time = 0.0
+    total_contact_time = 0.0
+    total_matvecs = 0
+    converged = False
+
+    try:
+        for iteration in range(max_iterations + 1):
+            residual, gap, normals, equilibrium_error, contact_error, min_J = state
+            residual_norm = np.linalg.norm(residual)
+            print(
+                f"{iteration:4d}  {equilibrium_error:13.3e}  {contact_error:13.3e}  "
+                f"{min_J:8.4f}  {accepted_alpha:9.3e}  "
+                f"{info['iterations']:6d}  {info['matvecs']:8d}"
+            )
+            if equilibrium_error <= newton_tol and contact_error <= contact_tol:
+                converged = True
+                break
+            if iteration == max_iterations:
+                break
+
+            material_matrix.zeroEntries()
+            assemble_matrix(material_matrix, tangent_form, bcs=[bc])
+            material_matrix.assemble()
+            # Modified Newton: freeze the current normals only during this LCP.
+            increment, new_fc, info = solve_flexibility(
+                material_matrix,
+                internal_force,
+                contact_dofs,
+                fixed_dofs,
+                gap,
+                normals,
+                force_scale,
+                gap_scale,
+                comm,
+                tol=gpcg_tol,
+                max_iter=gpcg_max_iter,
+            )
+            total_factor_time += info["factor_s"]
+            total_contact_time += info["contact_s"]
+            total_matvecs += info["matvecs"]
+            previous_u = u.x.array.copy()
+            previous_fc = fc.copy()
+            merit = 0.5 * residual_norm**2
+            alpha = 1.0
+
+            for _ in range(max_backtracks + 1):
+                u.x.array[:] = previous_u + alpha * increment
+                u.x.array[fixed_dofs] = 0.0
+                u.x.scatter_forward()
+                trial_fc = (1.0 - alpha) * previous_fc + alpha * new_fc
+                trial_state = evaluate_state(trial_fc)
+                if trial_state is not None:
+                    trial_merit = 0.5 * np.dot(trial_state[0], trial_state[0])
+                    if trial_merit <= (1.0 - 1.0e-4 * alpha) * merit:
+                        fc = trial_fc
+                        state = trial_state
+                        accepted_alpha = alpha
+                        break
+                alpha *= 0.5
+            else:
+                u.x.array[:] = previous_u
+                u.x.scatter_forward()
+                raise RuntimeError(
+                    f"Newton line search failed at iteration {iteration}."
+                )
+    finally:
+        material_matrix.destroy()
+
+    if not converged:
+        raise RuntimeError(f"Newton did not converge in {max_iterations} iterations.")
+    solve_time = perf_counter() - solve_start
+    residual, gap, normals, _, _, min_J = state
+    normal_forces = np.maximum(fc, 0.0)
+
+    current_area = np.zeros(ndofs, dtype=PETSc.ScalarType)
+    assemble_vector(current_area, current_area_form)
+    current_area = current_area[contact_dofs[:, 0]]
+    if np.any(current_area <= 0.0):
+        raise RuntimeError("Invalid current nodal surface area.")
+
+    # Recovered nodal traction uses force divided by current tributary area.
+    pressure = normal_forces / current_area
+    tc = Function(V)
+    tc.name = "tc"
+    tc.x.array[contact_dofs] = -pressure[:, None] * normals
+    Q, scalar_to_vector = V.sub(0).collapse()
+    p = Function(Q)
+    p.name = "p"
+    pressure_values = np.zeros(ndofs, dtype=PETSc.ScalarType)
+    pressure_values[contact_dofs] = pressure[:, None]
+    p.x.array[:] = pressure_values[scalar_to_vector]
+
+    n = Function(V)
+    n.name = "n"
+    n.x.array[:] = 0.0
+    assemble_vector(n.x.array, solid_normal_form)
+    normal_values = n.x.array[contact_dofs]
+    normal_lengths = np.linalg.norm(normal_values, axis=1)
+    if np.any(normal_lengths <= 0.0):
+        raise RuntimeError("Cannot recover a deformed surface normal.")
+    n.x.array[contact_dofs] = normal_values / normal_lengths[:, None]
+    for field in (u, tc, p, n):
+        field.x.scatter_forward()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with VTKFile(comm, str(output_dir / "contact.pvd"), "w") as vtk:
+        vtk.write_function([u, tc, p, n], 1.0)
+
+    body_force = -np.sum(normal_forces[:, None] * normals, axis=0)
+    support_reaction = internal_force[fixed_dofs].reshape(-1, 3).sum(axis=0)
+    print(f"Contact force on cube [N]: {body_force}")
+    print(f"Reaction on indenter [N]: {-body_force}")
+    print(f"Support reaction [N]: {support_reaction}")
+    print(f"Force balance [N]: {body_force + support_reaction}")
+    print(f"Maximum nodal penetration [m]: {max(0.0, -float(np.min(gap))):.3e}")
+    print(f"Minimum sampled det(F): {min_J:.6f}")
+    print(f"Factorization time: {total_factor_time:.3f} s")
+    print(
+        f"GPCG time: {total_contact_time:.3f} s; matrix-free products: {total_matvecs}"
+    )
+    print(f"Total solve time: {solve_time:.3f} s")
+    print(f"Results: {(output_dir / 'contact.pvd').resolve()}")
+
+
+if __name__ == "__main__":
+    main()

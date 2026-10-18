@@ -1,72 +1,42 @@
-import numpy as np
-import time
-import ufl
+from pathlib import Path
+from time import perf_counter
 
+import numpy as np
+import ufl
 from mpi4py import MPI
 from petsc4py import PETSc
 
-from dolfinx.mesh import (
-    create_box,
-    locate_entities_boundary,
-    meshtags,
-    entities_to_geometry,
-    CellType,
-)
-from dolfinx.io import VTKFile
 from dolfinx.fem import (
     Constant,
     Function,
-    functionspace,
-    dirichletbc,
-    locate_dofs_topological,
-    Expression,
-)
-from dolfinx.fem.petsc import (
-    NonlinearProblem,
-    LinearProblem,
-    assemble_matrix,
+    assemble_scalar,
     assemble_vector,
-    apply_lifting,
+    dirichletbc,
+    form,
+    functionspace,
+    locate_dofs_topological,
 )
-
-from cofebem.fenics.contact import Contact
-from cofebem.bodies.sphere_indenter import Sphere
-from cofebem.lcp import solve
+from dolfinx.fem.petsc import NonlinearProblem
+from dolfinx.io import VTKFile
+from dolfinx.mesh import CellType, create_box, locate_entities_boundary, meshtags
 
 comm = MPI.COMM_WORLD
-
 if comm.size != 1:
     raise RuntimeError("This script is written for serial execution.")
+if np.issubdtype(PETSc.ScalarType, np.complexfloating):
+    raise RuntimeError("This contact formulation requires real-valued PETSc.")
 
-
-Lx = 1.0
-Ly = 1.0
-H = 1.0
-
-nx = 20
-ny = 20
-nz = 20
-
-dirichlet_id = 1
-neumann_id = 2
-contact_id = 3
-
-E = 1.0e9
-nu = 0.3
-
-kpen = 1.0e12
-
-R = 0.35
-delta = 0.1
+Lx, Ly, Lz = 1.0, 1.0, 1.0
+nx, ny, nz = 20, 20, 20
+E, nu = 1.0e9, 0.3
+R, delta = 0.35, 0.1
 nsteps = 10
-
+quadrature_degree = 6
+output_dir = Path("results/penalty_contact_slide")
 
 mesh = create_box(
     comm,
-    [
-        np.array([0.0, 0.0, 0.0], dtype=np.float64),
-        np.array([Lx, Ly, H], dtype=np.float64),
-    ],
+    [np.zeros(3), np.array([Lx, Ly, Lz])],
     [nx, ny, nz],
     cell_type=CellType.tetrahedron,
 )
@@ -75,152 +45,107 @@ tdim = mesh.topology.dim
 fdim = tdim - 1
 gdim = mesh.geometry.dim
 
-mesh.topology.create_connectivity(fdim, 0)
-
-facets_bottom = locate_entities_boundary(
-    mesh,
-    fdim,
-    lambda x: np.isclose(x[2], 0.0),
-)
-
-facets_top = locate_entities_boundary(
-    mesh,
-    fdim,
-    lambda x: np.isclose(x[2], H),
-)
-
-facets_lateral = locate_entities_boundary(
-    mesh,
-    fdim,
-    lambda x: np.logical_or.reduce(
-        (
-            np.isclose(x[0], 0.0),
-            np.isclose(x[0], Lx),
-            np.isclose(x[1], 0.0),
-            np.isclose(x[1], Ly),
-        )
-    ),
-)
-
-facet_indices = np.hstack(
-    [
-        facets_bottom,
-        facets_lateral,
-        facets_top,
-    ]
-).astype(np.int32)
-
-facet_values = np.hstack(
-    [
-        np.full(len(facets_bottom), dirichlet_id, dtype=np.int32),
-        np.full(len(facets_lateral), neumann_id, dtype=np.int32),
-        np.full(len(facets_top), contact_id, dtype=np.int32),
-    ]
-).astype(np.int32)
-
-perm = np.argsort(facet_indices)
-
-facet_tags = meshtags(
-    mesh,
-    fdim,
-    facet_indices[perm],
-    facet_values[perm],
-)
-
-facets_c = facet_tags.indices[facet_tags.values == contact_id]
-
-if len(facets_c) == 0:
-    raise RuntimeError("No contact facets found.")
-
-gdofs_c = entities_to_geometry(mesh, fdim, facets_c, False)
-nodes_c = np.unique(gdofs_c.reshape(-1))
-Xc = mesh.geometry.x[nodes_c, :gdim]
-
-contact_center = np.array(
-    [
-        0.5 * Lx,
-        0.5 * Ly,
-    ],
-    dtype=np.float64,
-)
-
-print(f"Contact center: {contact_center}")
-print(f"Contact height H: {H}")
-print(f"Sphere radius R: {R}")
-print(f"Final indentation delta: {delta}")
-
+lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
+mu = E / (2.0 * (1.0 + nu))
+eps_n = Constant(mesh, PETSc.ScalarType(1.0e12))  # Penalty stiffness [Pa/m].
+indentation = Constant(mesh, PETSc.ScalarType(delta))
+xc = Constant(mesh, PETSc.ScalarType(0.0))
 
 V = functionspace(mesh, ("Lagrange", 1, (gdim,)))
-
 u = Function(V)
-u.name = "u_pen"
-
+u.name = "u"
+tc_out = Function(V)
+tc_out.name = "tc"
+du = ufl.TrialFunction(V)
 v = ufl.TestFunction(V)
-
+n = ufl.FacetNormal(mesh)
 x = ufl.SpatialCoordinate(mesh)
 
-mu = Constant(mesh, PETSc.ScalarType(E / (2.0 * (1.0 + nu))))
-lmbda = Constant(mesh, PETSc.ScalarType(E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))))
-k = Constant(mesh, PETSc.ScalarType(kpen))
 
-f = Constant(mesh, PETSc.ScalarType((0.0, 0.0, 0.0)))
-t = Constant(mesh, PETSc.ScalarType((0.0, 0.0, 0.0)))
-
-xc0 = Constant(mesh, PETSc.ScalarType(contact_center[0]))
-yc0 = Constant(mesh, PETSc.ScalarType(contact_center[1]))
-Rc = Constant(mesh, PETSc.ScalarType(R))
-z0 = Constant(mesh, PETSc.ScalarType(H - delta))
-
-
-def eps(w):
+def epsilon(w):
     return ufl.sym(ufl.grad(w))
 
 
 def sigma(w):
-    return lmbda * ufl.tr(eps(w)) * ufl.Identity(gdim) + 2.0 * mu * eps(w)
+    return lmbda * ufl.tr(epsilon(w)) * ufl.Identity(gdim) + 2.0 * mu * epsilon(w)
 
 
-ds = ufl.Measure("ds", domain=mesh, subdomain_data=facet_tags)
+f = Constant(mesh, np.zeros(gdim, dtype=PETSc.ScalarType))
+t0 = Constant(mesh, np.zeros(gdim, dtype=PETSc.ScalarType))
+u0 = Constant(mesh, np.zeros(gdim, dtype=PETSc.ScalarType))
 
-r2 = (x[0] - xc0) ** 2 + (x[1] - yc0) ** 2
+Gamma_u = locate_entities_boundary(mesh, fdim, lambda x: np.isclose(x[2], 0.0))
+Gamma_t = locate_entities_boundary(mesh, fdim, lambda x: np.isclose(x[0], 0.0))
+Gamma_c = locate_entities_boundary(mesh, fdim, lambda x: np.isclose(x[2], Lz))
 
-zobs = z0 + Rc - ufl.sqrt(ufl.max_value(Rc**2 - r2, 0.0))
+Gamma_u_id, Gamma_t_id, Gamma_c_id = 0, 1, 2
+boundaries = (Gamma_u, Gamma_t, Gamma_c)
+if any(facets.size == 0 for facets in boundaries):
+    raise RuntimeError("One or more tagged boundaries are empty.")
 
-gap = zobs - (x[2] + u[2])
+facet_indices = np.concatenate(boundaries).astype(np.int32)
+facet_values = np.concatenate(
+    [
+        np.full(Gamma_u.size, Gamma_u_id, dtype=np.int32),
+        np.full(Gamma_t.size, Gamma_t_id, dtype=np.int32),
+        np.full(Gamma_c.size, Gamma_c_id, dtype=np.int32),
+    ]
+)
+if np.unique(facet_indices).size != facet_indices.size:
+    raise ValueError("Gamma_u, Gamma_t and Gamma_c must not share facets.")
 
-pn = k * ufl.conditional(ufl.lt(gap, 0.0), -gap, 0.0)
+order = np.argsort(facet_indices)
+mt = meshtags(mesh, fdim, facet_indices[order], facet_values[order])
+ds = ufl.Measure(
+    "ds",
+    domain=mesh,
+    subdomain_data=mt,
+    metadata={"quadrature_degree": quadrature_degree},
+)
+dx = ufl.Measure("dx", domain=mesh)
+ds_c = ds(Gamma_c_id)
+
+Gamma_u_dofs = locate_dofs_topological(V, fdim, Gamma_u)
+bc = dirichletbc(u0, Gamma_u_dofs, V)
+
+r2 = (x[0] - xc) ** 2 + (x[1] - 0.5 * Ly) ** 2
+zobs = Lz - indentation + R - ufl.sqrt(ufl.max_value(R**2 - r2, 0.0))
+xobs = ufl.as_vector((x[0], x[1], zobs))
+
+g0 = ufl.dot(xobs - x, n)
+g = g0 - ufl.dot(u, n)
+penetration = ufl.conditional(
+    ufl.lt(r2, R**2),
+    ufl.conditional(ufl.lt(g, 0.0), -g, 0.0),
+    0.0,
+)
+pn = eps_n * penetration
+tc = -pn * n
 
 F = (
-    ufl.inner(sigma(u), eps(v)) * ufl.dx
-    - ufl.dot(f, v) * ufl.dx
-    - ufl.dot(t, v) * ds(neumann_id)
-    + pn * v[2] * ds(contact_id)
+    ufl.inner(sigma(u), epsilon(v)) * dx
+    - ufl.dot(f, v) * dx
+    - ufl.dot(t0, v) * ds(Gamma_t_id)
+    - ufl.dot(tc, v) * ds_c
 )
-
-J = ufl.derivative(F, u)
-
-facets_D = facet_tags.indices[facet_tags.values == dirichlet_id]
-
-if len(facets_D) == 0:
-    raise RuntimeError("No Dirichlet facets found.")
-
-dofs_D = locate_dofs_topological(V, fdim, facets_D)
-
-uD = Constant(mesh, PETSc.ScalarType((0.0, 0.0, 0.0)))
-bc = dirichletbc(uD, dofs_D, V)
+J = ufl.derivative(F, u, du)
 
 petsc_options = {
     "snes_type": "newtonls",
     "snes_linesearch_type": "bt",
-    "snes_atol": 1e-10,
-    "snes_rtol": 1e-8,
+    "snes_atol": 1.0e-6,
+    "snes_rtol": 1.0e-8,
+    "snes_stol": 0.0,
     "snes_max_it": 100,
-    "snes_monitor": None,
+    "snes_error_if_not_converged": True,
     "ksp_type": "preonly",
-    "pc_type": "lu",
+    "ksp_error_if_not_converged": True,
+    "pc_type": "cholesky",
+    "pc_factor_mat_solver_type": "mumps",
 }
 
-pen_problem = NonlinearProblem(
+setup_start = perf_counter()
+penalty_problem = NonlinearProblem(
     F,
     u,
     bcs=[bc],
@@ -228,129 +153,84 @@ pen_problem = NonlinearProblem(
     petsc_options=petsc_options,
     petsc_options_prefix="penalty_contact_",
 )
+penalty_problem.A.setOption(PETSc.Mat.Option.SPD, True)
 
-pen_start = time.time()
-pen_problem.solve()
-t_pen = time.time() - pen_start
-u.x.scatter_forward()
+active = ufl.conditional(ufl.lt(0.0, penetration), 1.0, 0.0)
+force_form = form(pn * ds_c)
+tc_form = form(ufl.dot(tc, v) * ds_c)
+nodal_area_form = form(ufl.dot(ufl.as_vector((1.0,) * gdim), v) * ds_c)
+nodal_area = np.zeros_like(tc_out.x.array)
+assemble_vector(nodal_area, nodal_area_form)
+surface_dofs = nodal_area > 0.0
+area_form = form(active * ds_c)
+penetration_squared_form = form(penetration**2 * ds_c)
+t_setup = perf_counter() - setup_start
 
-print(f"t_pen = {t_pen}")
-reason = pen_problem.solver.getConvergedReason()
-niter = pen_problem.solver.getIterationNumber()
+output_dir.mkdir(parents=True, exist_ok=True)
+history = []
+t_pen = 0.0
+solver = penalty_problem.solver
 
-print(f"SNES iterations: {niter}")
-print(f"SNES converged reason: {reason}")
-print("=================================================")
-# ============================================================
-#                     Flexibility method
-# ============================================================
-
-tc = Function(V)
-tc.name = "contact_traction"
-
-u2 = ufl.TrialFunction(V)
-v2 = ufl.TestFunction(V)
-
-a_flex = ufl.inner(sigma(u2), eps(v2)) * ufl.dx
-L_flex = (
-    ufl.dot(f, v2) * ufl.dx
-    + ufl.dot(t, v2) * ds(neumann_id)
-    + ufl.dot(tc, v2) * ds(contact_id)
+print(f"Displacement DOFs: {V.dofmap.index_map.size_global * V.dofmap.index_map_bs}")
+print(f"Setup, including form compilation: {t_setup:.3f} s")
+print(
+    "step   x_indenter   iterations    residual       force        area      rms_pen      solve_s"
 )
 
-flex_problem = LinearProblem(
-    a_flex,
-    L_flex,
-    bcs=[bc],
-    petsc_options_prefix="flex_contact_",
-    petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
-)
-u_flex = flex_problem.u
-u_flex.name = "u_flex"
+with VTKFile(comm, str(output_dir / "contact.pvd"), "w") as vtk:
+    for step, x_step in enumerate(np.linspace(0.0, Lx, nsteps + 1)):
+        xc.value = PETSc.ScalarType(x_step)
 
-indenter = Sphere(
-    center=np.array([contact_center[0], contact_center[1], H + R - delta]), radius=R
-)
+        step_start = perf_counter()
+        penalty_problem.solve()
+        t_step = perf_counter() - step_start
+        t_pen += t_step
+        u.x.scatter_forward()
 
-t0 = time.time()
-contact = Contact(
-    mesh=mesh,
-    indenter=indenter,
-    tc=tc,
-    Gamma_c=facets_top,
-    ds=ds,
-    Gamma_c_id=contact_id,
-    problem=flex_problem,
-    solver="ccg",
-)
-t_sc_build = time.time() - t0
-print(f"\nSc build (once): {t_sc_build:.3f} s " f"({contact.Sc.shape[0]} contact dofs)")
+        tc_out.x.array[:] = 0.0
+        assemble_vector(tc_out.x.array, tc_form)
+        # Mass-lumped boundary projection: nodal force / nodal area.
+        np.divide(
+            tc_out.x.array,
+            nodal_area,
+            out=tc_out.x.array,
+            where=surface_dofs,
+        )
+        tc_out.x.scatter_forward()
 
-t_flex_start = time.time()
-contact.solve(max_iter=10000, tol=1e-7, p0=1e9)
-contact.apply_contact_forces()
-flex_problem.solve()
-t_flex = time.time() - t_flex_start + t_sc_build
+        reason = int(solver.getConvergedReason())
+        niter = solver.getIterationNumber()
+        residual = solver.getFunctionNorm()
+        force = float(assemble_scalar(force_form))
+        area = float(assemble_scalar(area_form))
+        penetration_squared = float(assemble_scalar(penetration_squared_form))
+        rms_penetration = np.sqrt(penetration_squared / area) if area > 0.0 else 0.0
 
-print(f"t_flex = {t_flex}")
+        history.append(
+            (
+                step,
+                x_step,
+                niter,
+                reason,
+                residual,
+                force,
+                area,
+                rms_penetration,
+                t_step,
+            )
+        )
+        print(
+            f"{step:4d}  {x_step:11.4e}  {niter:10d}  {residual:10.3e}  "
+            f"{force:10.3e}  {area:10.3e}  {rms_penetration:10.3e}  {t_step:9.3f}"
+        )
+        vtk.write_function([u, tc_out], float(x_step))
 
-
-# for i in range(1, nsteps + 1):
-#     delta = delta_final * i / nsteps
-#     z0.value = PETSc.ScalarType(H - delta)
-
-#     print()
-#     print(f"Load step {i}/{nsteps}, delta = {delta}")
-
-#     problem.solve()
-#     u.x.scatter_forward()
-
-#     reason = problem.solver.getConvergedReason()
-#     niter = problem.solver.getIterationNumber()
-
-#     print(f"SNES iterations: {niter}")
-#     print(f"SNES converged reason: {reason}")
-
-#     if reason <= 0:
-#         raise RuntimeError(f"SNES did not converge at load step {i}. Reason: {reason}")
-
-
-# def interpolation_points(V):
-#     pts = V.element.interpolation_points
-#     if callable(pts):
-#         return pts()
-#     return pts
-
-
-# W = functionspace(mesh, ("DG", 0))
-
-# gap_fun = Function(W)
-# gap_fun.name = "gap"
-
-# pn_fun = Function(W)
-# pn_fun.name = "penalty_pressure"
-
-# zobs_fun = Function(W)
-# zobs_fun.name = "z_obstacle"
-
-# pts = interpolation_points(W)
-
-# gap_expr = Expression(gap, pts)
-# pn_expr = Expression(pn, pts)
-# zobs_expr = Expression(zobs, pts)
-
-# gap_fun.interpolate(gap_expr)
-# pn_fun.interpolate(pn_expr)
-# zobs_fun.interpolate(zobs_expr)
-
-# with VTKFile(comm, "u_penalty_rigid_contact.pvd", "w") as vtk:
-#     vtk.write_function(u)
-
-# with VTKFile(comm, "gap_penalty_rigid_contact.pvd", "w") as vtk:
-#     vtk.write_function(gap_fun)
-
-# with VTKFile(comm, "pressure_penalty_rigid_contact.pvd", "w") as vtk:
-#     vtk.write_function(pn_fun)
-
-# with VTKFile(comm, "obstacle_height.pvd", "w") as vtk:
-#     vtk.write_function(zobs_fun)
+# np.savetxt(
+#     output_dir / "history.csv",
+#     np.asarray(history),
+#     delimiter=",",
+#     header="step,x_indenter,iterations,reason,residual,normal_force,contact_area,rms_penetration,solve_s",
+#     comments="",
+# )
+print(f"Total solve time: {t_pen:.3f} s")
+print(f"Results: {output_dir.resolve()}")
